@@ -36,8 +36,7 @@ NS_MAP = {
     "ns9": "xmlns://www.fortify.com/schema/attachments",
 }
 
-FPRSOURCECODE = r"C:/Users/phitarth/Desktop/researchpaper/FPRs/webgoat/src-archive/"
-CODEDIR = r"C:/Users/phitarth/Desktop/researchpaper/fake-pos-detect/data/extracted"
+CODEDIR = os.path.abspath("data/extracted")
 if not os.path.exists(CODEDIR):
     os.makedirs(CODEDIR)
 
@@ -51,12 +50,16 @@ class FPRParser():
 
         def __init__(self) -> None:
             self.nsmap = None
+            self.project = None
+            self.codePath = None
 
         def openFPR(self, infile):
             """
             TODO: Open FPR and make elementTrees/objectify
             """
-            fprArchive = zipfile.ZipFile(infile, mode="r", compression=zipfile.ZIP_DEFLATED)
+            fprArchive = zipfile.ZipFile(os.path.abspath(infile), mode="r", compression=zipfile.ZIP_DEFLATED)
+            self.project = os.path.basename(infile)[0:-4]
+            fprArchive.extractall(os.path.abspath(os.path.join("../FPRs", self.project)))
             auditFile = fprArchive.open("audit.xml")
             fvdlFile = fprArchive.open("audit.fvdl")
             codeIndex = fprArchive.open("src-archive/index.xml")
@@ -171,7 +174,6 @@ class FPRParser():
         # log.info("Suspicious Count: %d" % sus_count)
         all_issues = [*sus_issues, *fp_issues]
         # log.info("All Issues: %d" % (len(all_issues)))
-
         return all_issues
 
     def buildFindings(self, infile):
@@ -205,15 +207,19 @@ class FPRParser():
         codeIndex = self.FPR.openFPR(infile)[2]
         index = codeIndex.getroot().iterdescendants("{*}entry")
 
+        fullPath = os.path.abspath(infile)[0:-4]
+        codeLocation = os.path.join(fullPath, "src-archive\\")
+        print(codeLocation)
+
         for i in index:
             indexFilePath = i.attrib["key"]
             for finding in self.findings:
                 filepath = finding.filepath
                 if indexFilePath == filepath: 
                     srcLocation = i.xpath(".//text()")[0][12:]
-                    shutil.copy(os.path.join(FPRSOURCECODE, srcLocation), CODEDIR)
+                    shutil.copy(os.path.join(codeLocation, srcLocation), CODEDIR)
                     log.info("Copied extracted code to /data/extracted")
 
         for root, dir, f in os.walk(CODEDIR):
             for i in f:
-                os.rename(os.path.join(CODEDIR, i), os.path.join(CODEDIR, ''.join([str(i), '.java'])))
+                os.rename(os.path.join(CODEDIR, i), os.path.join(CODEDIR, ''.join([str(i), self.FPR.project , '.java'])))

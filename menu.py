@@ -22,11 +22,10 @@ def main():
     # let the parser parse args
     args = parser.parse_args()
     fparser = FPRParser()
+    fparser.FPR.openFPR(args.fpr)
     FPRParser().getAllAnalyzedIssues(args.fpr)
     fparser.buildFindings(args.fpr)
     fparser.mapFilenameToCode(args.fpr)
-    
-    # FPRParser().buildFindings(args.fpr)
-    
+        
 if __name__ == "__main__":
     main()
