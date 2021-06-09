@@ -18,14 +18,17 @@ def main():
 
     # Add arguments
     parser.add_argument("-f", "--fpr", required=True, help="Enter the FPR that needs to be parsed.")
+    parser.add_argument("-ld", "--label-data", help="Enter the file_path of data to correspond labels.")
 
     # let the parser parse args
     args = parser.parse_args()
     fparser = FPRParser()
     fparser.FPR.openFPR(args.fpr)
-    FPRParser().getAllAnalyzedIssues(args.fpr)
+    # FPRParser().getAllAnalyzedIssues(args.fpr)
     fparser.buildFindings(args.fpr)
     fparser.mapFilenameToCode(args.fpr)
+
+    print(fparser.findings[0])
         
 if __name__ == "__main__":
     main()

@@ -37,8 +37,12 @@ NS_MAP = {
 }
 
 CODEDIR = os.path.abspath("data/extracted")
+LABELDIR = os.path.abspath("data/label")
 if not os.path.exists(CODEDIR):
     os.makedirs(CODEDIR)
+
+if not os.path.exists(LABELDIR):
+    os.makedirs(LABELDIR)
 
 class FPRParser():
 
@@ -202,24 +206,36 @@ class FPRParser():
 
     def mapFilenameToCode(self, infile):
         """
-        TODO: Write a function that will map the filename to findings
+        Function maps filename to code snippet for extraction
+        Function also creates a label file corresponding to code snippet and saved as analysis
         """
         codeIndex = self.FPR.openFPR(infile)[2]
         index = codeIndex.getroot().iterdescendants("{*}entry")
 
         fullPath = os.path.abspath(infile)[0:-4]
         codeLocation = os.path.join(fullPath, "src-archive\\")
-        print(codeLocation)
+        # print(codeLocation)
 
         for i in index:
             indexFilePath = i.attrib["key"]
             for finding in self.findings:
                 filepath = finding.filepath
-                if indexFilePath == filepath: 
+                if indexFilePath == filepath:
                     srcLocation = i.xpath(".//text()")[0][12:]
                     shutil.copy(os.path.join(codeLocation, srcLocation), CODEDIR)
+                    with open(LABELDIR + "/labels.csv", "a") as label:
+                        label.write(os.path.join(CODEDIR, ''.join([str(srcLocation), self.FPR.project , '.java'])) + "," + finding.analysis + "\n")
                     log.info("Copied extracted code to /data/extracted")
 
         for root, dir, f in os.walk(CODEDIR):
             for i in f:
-                os.rename(os.path.join(CODEDIR, i), os.path.join(CODEDIR, ''.join([str(i), self.FPR.project , '.java'])))
+                if not i.lower().endswith(".java"):
+                    os.rename(os.path.join(CODEDIR, i), os.path.join(CODEDIR, ''.join([str(i), self.FPR.project , '.java'])))
+
+    # def mapLabel(self):
+    #     """
+    #     This method maps each file to its corresonding label. Have to figure out how to use subtokens like code2seq.
+    #     """
+    #     file_path = "/data/extracted"
+    #     with open(file_path + "/labeld.csv") as label:
+    #         for f in self.findings:
