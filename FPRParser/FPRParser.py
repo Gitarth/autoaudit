@@ -231,11 +231,3 @@ class FPRParser():
             for i in f:
                 if not i.lower().endswith(".java"):
                     os.rename(os.path.join(CODEDIR, i), os.path.join(CODEDIR, ''.join([str(i), self.FPR.project , '.java'])))
-
-    # def mapLabel(self):
-    #     """
-    #     This method maps each file to its corresonding label. Have to figure out how to use subtokens like code2seq.
-    #     """
-    #     file_path = "/data/extracted"
-    #     with open(file_path + "/labeld.csv") as label:
-    #         for f in self.findings:
