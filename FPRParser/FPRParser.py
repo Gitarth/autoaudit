@@ -49,7 +49,7 @@ class FPRParser():
     def __init__(self) -> None:
         self.findings = []
         self.FPR = self.FPR()
-    
+
     class FPR(object):
 
         def __init__(self) -> None:
@@ -61,13 +61,13 @@ class FPRParser():
             """
             TODO: Open FPR and make elementTrees/objectify
             """
-            fprArchive = zipfile.ZipFile(os.path.abspath(infile), mode="r", compression=zipfile.ZIP_DEFLATED)
+            fprArchive = zipfile.ZipFile(infile, mode="r", compression=zipfile.ZIP_DEFLATED)
             self.project = os.path.basename(infile)[0:-4]
-            fprArchive.extractall(os.path.abspath(os.path.join("../FPRs", self.project)))
+            fprArchive.extractall(os.path.abspath(os.path.join("FPRs", self.project)))
             auditFile = fprArchive.open("audit.xml")
             fvdlFile = fprArchive.open("audit.fvdl")
             codeIndex = fprArchive.open("src-archive/index.xml")
-            
+
             # Making xml files into lxml objects/elementTrees
             self.auditTree = etree.parse(auditFile)
             self.nsmap = self.auditTree.getroot().nsmap
@@ -91,7 +91,7 @@ class FPRParser():
             self.filepath = filepath
             self.analysis = analysis
             self.severity = severity
-        
+
         def __str__(self):
             return "InstanceId:\t %s\nAnalysis:\t %s\nFilepath:\t %s\nSeverity:\t %s" % (self.instanceId, self.analysis, self.filepath, self.severity)
 
@@ -120,7 +120,7 @@ class FPRParser():
             elif impact < 2.5 and likelihood < 2.5:
                 self.priority = '4 - Low'
                 self.criticality = "Low"
-    
+
     def getAllSusIssues(self, infile):
         """
         Returns: All suspicious findings
@@ -139,12 +139,12 @@ class FPRParser():
             if (not len(analysis) == 0) and (analysis[0].text == "Suspicious"):
                 sus_issues.append(issue)
                 issue_count += 1
-        
+
         return sus_issues, issue_count
-    
+
     def getAllFPIssues(self, infile):
         """
-        Returns: Al'Not an Issue findings
+        Returns: All 'Not an Issue findings
         """
         audit = self.FPR.openFPR(infile)[0]
 
@@ -160,7 +160,7 @@ class FPRParser():
             if (not len(analysis) == 0) and (analysis[0].text =="Not an Issue"):
                 fp_issues.append(issue)
                 issue_count += 1
-        
+
         return fp_issues, issue_count
 
     def getAllAnalyzedIssues(self, infile):
@@ -173,7 +173,7 @@ class FPRParser():
 
         sus_issues = self.getAllSusIssues(infile)[0]
         sus_count = self.getAllSusIssues(infile)[1]
-        
+
         # log.info("False Positive Count: %d" % fp_count)
         # log.info("Suspicious Count: %d" % sus_count)
         all_issues = [*sus_issues, *fp_issues]
@@ -182,13 +182,13 @@ class FPRParser():
 
     def buildFindings(self, infile):
         """
-        TODO: Remove all .js filepath findings.
+        TODO: Remove all filepath that do not end with .java findings.
         """
         # get all vulnerabilities
         fvdl = self.FPR.openFPR(infile)[1]
         vulns = fvdl.getroot().iterdescendants("{*}Vulnerability")
         all_issues = self.getAllAnalyzedIssues(infile)
-        
+
         for vul in vulns:
             vinstanceId = vul.find(".//{*}InstanceID").text
             for issue in all_issues:
@@ -199,7 +199,7 @@ class FPRParser():
                     tmpfilepath = vul.find(".//{*}SourceLocation").attrib['path']
                     if tmpfilepath.endswith(".java"):
                         filepath = tmpfilepath
-                    # confidence = float(vul.find(".//{*}Confidence").text)
+                        # confidence = float(vul.find(".//{*}Confidence").text)
                         finding = self.Finding(instanceid, filepath, analysis, severity)
                         self.findings.append(finding)
         log.info("Finished building findings from FPR.")
@@ -212,9 +212,9 @@ class FPRParser():
         codeIndex = self.FPR.openFPR(infile)[2]
         index = codeIndex.getroot().iterdescendants("{*}entry")
 
-        fullPath = os.path.abspath(infile)[0:-4]
-        codeLocation = os.path.join(fullPath, "src-archive\\")
-        # print(codeLocation)
+        exFPRPath = os.path.abspath("FPRs")
+        fullPath = os.path.join(exFPRPath, self.FPR.project)
+        codeLocation = os.path.join(fullPath, "src-archive")
 
         for i in index:
             indexFilePath = i.attrib["key"]

@@ -84,11 +84,19 @@ def getValidProjects():
     # import pdb; pdb.set_trace()
     # Requires full path to validPorjects dir
     # thePath = "C:/Users/phitarth/Desktop/researchpaper/fake-pos-detect/Crawler/data/validProjects/" + "**/pom.xml"
-    thePath = os.path.abspath("Crawler/data/validProjects/**/pom.xml")
+    from pathlib import Path
+    thePath = os.path.abspath("data/validProjects/**/pom.xml")
     poms = glob.glob(thePath, recursive=True)
     valid_project_path = []
+    visited_projects = []
     for pom in poms:
-        valid_project_path.append(pom)
+        p = Path(pom)
+        project = p.parts[9]
+        if project not in visited_projects:
+            # print("Project pom added: {:s}\nPom Location: {:s}".format(project, str(p)))
+            visited_projects.append(project)
+            valid_project_path.append(p)
+    # print(len(visited_projects))
     return valid_project_path
     
 
@@ -150,4 +158,4 @@ if __name__ == "__main__":
     # execute()
     # extract(OUTPUT_DIR+"/applications/")
     # cleanUp(OUTPUT_DIR+"/extractedApps/")
-    print(getValidProjects())
+    getValidProjects()
