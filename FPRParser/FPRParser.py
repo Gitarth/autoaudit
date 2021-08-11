@@ -121,6 +121,19 @@ class FPRParser():
                 self.priority = '4 - Low'
                 self.criticality = "Low"
 
+    def getAllIssues(self, infile):
+        """
+        Returns: All findings
+        """
+        audit = self.FPR.openFPR(infile)[0]
+
+        # get all issues from audit.xml
+        issues = audit.getroot().iterdescendants("{*}Issue")
+        issue_count = 0
+        for issue in issues:
+            issue_count += 1
+        return issue_count
+
     def getAllSusIssues(self, infile):
         """
         Returns: All suspicious findings
