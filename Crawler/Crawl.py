@@ -180,6 +180,6 @@ if __name__ == "__main__":
     """
 
     # execute()
-    # extract(os.path.join(OUTPUT_DIR, "downloaded_Apps"))
-    # cleanUp(os.path.join(OUTPUT_DIR, "extractedApps"))
-    # getValidProjects()
+    # extract(OUTPUT_DIR+"/applications/")
+    # cleanUp(OUTPUT_DIR+"/extractedApps/")
+    getValidProjects()
