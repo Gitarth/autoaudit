@@ -13,7 +13,7 @@ import shutil
 import glob
 
 # ---------- CONSTANTS -----------
-TOKEN = "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"
+TOKEN = "key"
 USER = "gitarth"
 OUTPUT_DIR = os.path.abspath("data")
 STATFILE = os.path.abspath(OUTPUT_DIR+"/stats.txt")
