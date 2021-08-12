@@ -36,7 +36,7 @@ NS_MAP = {
     "ns9": "xmlns://www.fortify.com/schema/attachments",
 }
 
-CODEDIR = os.path.abspath("data/extracted")
+CODEDIR = os.path.abspath("data/extractedJavaFiles")
 LABELDIR = os.path.abspath("data/label")
 if not os.path.exists(CODEDIR):
     os.makedirs(CODEDIR)
@@ -86,14 +86,19 @@ class FPRParser():
 
     class Finding():
 
-        def __init__(self, instanceId, filepath, analysis, severity):
+        def __init__(self, instanceId, filepath, analysis, severity, type, subtype):
             self.instanceId = instanceId
             self.filepath = filepath
             self.analysis = analysis
             self.severity = severity
+            # Parent Category
+            self.type = type
+            # Child Category
+            self.subtype = subtype
 
         def __str__(self):
-            return "InstanceId:\t %s\nAnalysis:\t %s\nFilepath:\t %s\nSeverity:\t %s" % (self.instanceId, self.analysis, self.filepath, self.severity)
+            category = self.type + ': ' + self.subtype if self.subtype is not None else self.type
+            return "InstanceId:\t %s\nAnalysis:\t %s\nFilepath:\t %s\nSeverity:\t %s\nCategory:\t %s" % (self.instanceId, self.analysis, self.filepath, self.severity, category)
 
         def calculate_likelihood(self, accuracy, confidence, probability):
             """
@@ -209,13 +214,27 @@ class FPRParser():
                 if vinstanceId == instanceid:
                     analysis = issue.xpath(".//ns2:Value/text()", namespaces=self.FPR.nsmap)[1]
                     severity = vul.find(".//{*}InstanceSeverity").text
+                    pCategory = vul.find(".//{*}Type").text
+                    sCategory = getattr(vul.find(".//{*}Subtype"), 'text', None)
                     tmpfilepath = vul.find(".//{*}SourceLocation").attrib['path']
                     if tmpfilepath.endswith(".java"):
                         filepath = tmpfilepath
                         # confidence = float(vul.find(".//{*}Confidence").text)
-                        finding = self.Finding(instanceid, filepath, analysis, severity)
+                        finding = self.Finding(instanceid, filepath, analysis, severity, pCategory, sCategory)
                         self.findings.append(finding)
         log.info("Finished building findings from FPR.")
+
+    def getCategories(self):
+        categories = []
+        for f in self.findings:
+            if f.subtype is not None:
+                c = f.type+"_"+f.subtype
+            elif f.type is not None:
+                c = f.type
+
+            if c not in categories:
+                categories.append(c)
+        return categories
 
     def mapFilenameToCode(self, infile):
         """
@@ -229,18 +248,29 @@ class FPRParser():
         fullPath = os.path.join(exFPRPath, self.FPR.project)
         codeLocation = os.path.join(fullPath, "src-archive")
 
-        for i in index:
-            indexFilePath = i.attrib["key"]
-            for finding in self.findings:
-                filepath = finding.filepath
-                if indexFilePath == filepath:
-                    srcLocation = i.xpath(".//text()")[0][12:]
-                    shutil.copy(os.path.join(codeLocation, srcLocation), CODEDIR)
-                    with open(LABELDIR + "/labels.csv", "a") as label:
-                        label.write(os.path.join(CODEDIR, ''.join([str(srcLocation), self.FPR.project , '.java'])) + "," + finding.analysis + "\n")
-                    log.info("Copied extracted code to /data/extracted")
+        categories = self.getCategories()
+        for c in categories:
+            for i in index:
+                indexFilePath = i.attrib["key"]
+                for finding in self.findings:
+                    filepath = finding.filepath
+                    if finding.subtype is not None:
+                        category = finding.type+"_"+finding.subtype
+                    if indexFilePath == filepath: 
+                        if c == category or c == finding.type:
+                            if not os.path.exists(os.path.join(CODEDIR, c)):
+                                os.mkdir(os.path.join(CODEDIR, c))
+                            srcLocation = i.xpath(".//text()")[0][12:]
+                            shutil.copy(os.path.join(codeLocation, srcLocation), os.path.join(CODEDIR, c))
+                            with open(LABELDIR + "/labels.csv", "a") as label:
+                                label.write(os.path.join(os.path.join(CODEDIR, c), ''.join([str(srcLocation), self.FPR.project , '.java'])) + "," + finding.analysis + "\n")
+                            log.info("Copied extracted code to /data/extractedJavaFiles")
 
-        for root, dir, f in os.walk(CODEDIR):
-            for i in f:
-                if not i.lower().endswith(".java"):
-                    os.rename(os.path.join(CODEDIR, i), os.path.join(CODEDIR, ''.join([str(i), self.FPR.project , '.java'])))
+        for d in os.listdir(CODEDIR):
+            for f in os.listdir(os.path.join(CODEDIR, d)):
+                if not f.lower().endswith(".java"):
+                    os.rename(
+                        os.path.join(os.path.join(CODEDIR, d, f)),
+                        os.path.join(
+                            os.path.join(CODEDIR, d),
+                            ''.join([str(f), self.FPR.project, '.java'])))

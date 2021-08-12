@@ -51,6 +51,7 @@ def main():
         fparser.FPR.openFPR(args.fpr)
         # FPRParser().getAllAnalyzedIssues(args.fpr)
         fparser.buildFindings(args.fpr)
+        # print(getattr(fparser.findings[0], 'type'))
         fparser.mapFilenameToCode(args.fpr)
 
 if __name__ == "__main__":
