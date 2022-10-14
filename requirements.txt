@@ -36,6 +36,6 @@ torch==1.8.1+cu111
 torchaudio==0.8.1
 torchvision==0.9.1+cu111
 typing-extensions==3.10.0.0
-urllib3==1.26.4
+urllib3==1.26.5
 Werkzeug==2.0.0
 wrapt==1.12.1
