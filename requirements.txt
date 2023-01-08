@@ -32,7 +32,7 @@ tensorboard-plugin-wit==1.8.0
 tensorflow==2.5.0
 tensorflow-estimator==2.5.0
 termcolor==1.1.0
-torch==1.8.1+cu111
+torch==1.13.1
 torchaudio==0.8.1
 torchvision==0.9.1+cu111
 typing-extensions==3.10.0.0
