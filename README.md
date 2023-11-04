@@ -1,6 +1,6 @@
 # autoaudit
 
-Autoaudit is a powerful tool designed to streamline and simplify the intricate tasks of data collection, processing, and code vectorization. Leveraging the state-of-the-art code2vec model, Autoaudit automates these essential processes, allowing for efficient and accurate analysis of codebases and data sets. 
+Autoaudit is a powerful tool designed to streamline and simplify the intricate tasks of data collection, processing, and code vectorization. Leveraging the [code2vec model](https://github.com/tech-srl/code2vec), Autoaudit automates these essential processes, allowing for efficient and accurate analysis of codebases and data sets. 
 
 
 ## [Contribution Guidelines](https://github.com/Gitarth/autoaudit/wiki/Contribution-Guidelines)
