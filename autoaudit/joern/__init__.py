@@ -239,12 +239,14 @@ def scan(
     bin_dir: Path | None = None,
     language: str | None = None,
     timeout: int | None = None,
+    max_flows: int = 200,
 ) -> int:
-    """Parse + query one source tree; returns the number of flows found."""
+    """Parse + query one source tree; returns the number of flows found.
+    `max_flows` caps flows per rule so one noisy rule cannot flood a large repo."""
     work_dir.mkdir(parents=True, exist_ok=True)
     cpg = work_dir / f"{out_sarif.stem}.cpg.bin"
     parse(src, cpg, bin_dir, language, timeout)
-    flows = query(cpg, spec, bin_dir, timeout)
+    flows = query(cpg, spec, bin_dir, timeout, max_flows)
     out_sarif.parent.mkdir(parents=True, exist_ok=True)
     out_sarif.write_text(json.dumps(to_sarif(flows, spec), indent=1), encoding="utf-8")
     return len(flows)

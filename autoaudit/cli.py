@@ -6,6 +6,9 @@ autoaudit command line.
     autoaudit joern     language-agnostic taint analysis with Joern -> SARIF
     autoaudit alerts    normalize SARIF from any analyzer into alerts.jsonl
     autoaudit context   show the source-to-sink code an analyst/LLM sees for one alert
+    autoaudit triage    LLM verdict per alert (bring your own Anthropic / OpenAI-compatible key)
+    autoaudit infer-spec  LLM-written taint rules tailored to one codebase
+    autoaudit eval      score scanner and triage against OWASP Benchmark or hand labels
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -25,7 +28,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import alerts, c2v, crawl, dataset, joern, metrics, projects, scan
+from . import alerts, c2v, crawl, dataset, evaluate, joern, llm, metrics, projects, scan, specgen, triage
 from .context import build_context
 from .fpr import ANALYSIS_VALUES, FPR
 
@@ -82,6 +85,7 @@ def cmd_joern(a):
                 a.bin_dir,
                 a.language,
                 a.timeout,
+                a.max_flows,
             )
             counts[name] = n
             logging.info("%s: %d flows", name, n)
@@ -114,6 +118,97 @@ def cmd_context(a):
     root = a.src or projects.source_root(a.data_dir / "repos" / alert.project)
     print(f"{alert.rule_id} {', '.join(alert.cwes)} {alert.path}:{alert.line}\n{alert.message}\n")
     print(build_context(alert, root, window=a.window))
+
+
+def _provider(a) -> llm.Provider:
+    return llm.make_provider(
+        a.provider, a.model, a.base_url, a.api_key_env, a.max_tokens_field, max_tokens=a.max_tokens
+    )
+
+
+def _add_llm_args(s):
+    g = s.add_argument_group("LLM (bring your own key)")
+    g.add_argument(
+        "--provider",
+        choices=["anthropic", "openai"],
+        default="anthropic",
+        help="'openai' means any OpenAI-compatible Chat Completions API",
+    )
+    g.add_argument("--model", help=f"default for anthropic: {llm.DEFAULT_MODELS['anthropic']}")
+    g.add_argument("--base-url", help="API base URL (e.g. http://localhost:11434/v1 for Ollama)")
+    g.add_argument(
+        "--api-key-env", help="env var holding the key (default ANTHROPIC_API_KEY / OPENAI_API_KEY)"
+    )
+    g.add_argument("--max-tokens", type=int, default=2048)
+    g.add_argument(
+        "--max-tokens-field",
+        default="max_tokens",
+        help="openai only: use max_completion_tokens for newer OpenAI models",
+    )
+    g.add_argument("--price-in", type=float, help="USD per million input tokens (for cost reports)")
+    g.add_argument("--price-out", type=float, help="USD per million output tokens")
+
+
+def cmd_triage(a):
+    found = alerts.read_jsonl(a.alerts)
+    if a.rule:
+        found = [x for x in found if x.rule_id in set(a.rule)]
+    if a.limit:
+        found = found[: a.limit]
+    roots = {}
+    for x in found:
+        if x.project not in roots:
+            roots[x.project] = a.src or projects.source_root(a.data_dir / "repos" / x.project)
+    provider = _provider(a)
+    stats = triage.triage(
+        found,
+        roots,
+        provider,
+        a.out,
+        workers=a.workers,
+        window=a.window,
+        budget_usd=a.budget_usd,
+        price_in=a.price_in,
+        price_out=a.price_out,
+    )
+    print(json.dumps(stats, indent=2))
+
+
+def cmd_infer_spec(a):
+    base = joern.load_spec(a.base) if a.base else None
+    spec, usage = specgen.infer_spec(a.src, _provider(a), base)
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    a.out.write_text(json.dumps(spec, indent=2))
+    print(
+        json.dumps(
+            {
+                "rules": [r["id"] for r in spec["rules"]],
+                "out": str(a.out),
+                "usage": usage.__dict__,
+                "cost_usd": usage.cost(a.price_in, a.price_out),
+            },
+            indent=2,
+        )
+    )
+
+
+def cmd_eval(a):
+    found = alerts.read_jsonl(a.alerts)
+    results = evaluate.read_triage(a.triage) if a.triage else None
+    report = {}
+    if a.owasp:
+        expected = evaluate.read_owasp_expected(a.owasp)
+        report["scanner"] = evaluate.score_owasp(found, expected)
+        if results is not None:
+            report["scanner+triage"] = evaluate.score_owasp(found, expected, results, a.keep_uncertain)
+            report["triage"] = evaluate.score_triage(evaluate.label_owasp_alerts(found, expected), results)
+    if a.labels:
+        if results is None:
+            sys.exit("--labels needs --triage")
+        report["triage_vs_labels"] = evaluate.score_triage(evaluate.read_labels(a.labels), results)
+    if not report:
+        sys.exit("give --owasp and/or --labels")
+    print(json.dumps(report, indent=2))
 
 
 def cmd_stats(a):
@@ -188,6 +283,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--bin-dir", type=Path, help="directory with joern and joern-parse (env: JOERN_HOME)")
     s.add_argument("--language", help="force a Joern frontend, e.g. java, pythonsrc, jssrc")
     s.add_argument("--timeout", type=int, default=None, help="seconds per Joern step")
+    s.add_argument("--max-flows", type=int, default=200, help="cap on reported flows per rule per project")
     s.set_defaults(func=cmd_joern)
 
     s = sub.add_parser("alerts", help="SARIF files (any analyzer) -> alerts.jsonl")
@@ -201,6 +297,40 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--src", type=Path, help="source root (default: <data-dir>/repos/<project>)")
     s.add_argument("--window", type=int, default=6, help="lines of context around each step")
     s.set_defaults(func=cmd_context)
+
+    s = sub.add_parser("triage", help="LLM verdict for each alert; appends to <data-dir>/triage.jsonl")
+    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/triage.jsonl")
+    s.add_argument(
+        "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
+    )
+    s.add_argument("--rule", nargs="*", help="only these rule ids")
+    s.add_argument("--limit", type=int, help="triage at most N alerts (try it on a sample first)")
+    s.add_argument("--workers", type=int, default=4)
+    s.add_argument("--window", type=int, default=8, help="lines of context around each flow step")
+    s.add_argument("--budget-usd", type=float, help="stop starting new requests past this spend")
+    _add_llm_args(s)
+    s.set_defaults(func=cmd_triage)
+
+    s = sub.add_parser("infer-spec", help="LLM-written taint spec for one codebase")
+    s.add_argument("--src", type=Path, required=True, help="repository root")
+    s.add_argument("--out", type=Path, required=True, help="where to write the spec JSON")
+    s.add_argument("--base", type=Path, help="baseline spec to adapt (e.g. autoaudit/specs/java.json)")
+    _add_llm_args(s)
+    s.set_defaults(func=cmd_infer_spec)
+
+    s = sub.add_parser("eval", help="score scanner and triage against ground truth")
+    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--triage", type=Path, help="triage results (JSONL)")
+    s.add_argument("--owasp", type=Path, help="OWASP Benchmark expectedresults-*.csv")
+    s.add_argument("--labels", type=Path, help="hand labels CSV: alert_id,label")
+    s.add_argument(
+        "--drop-uncertain",
+        dest="keep_uncertain",
+        action="store_false",
+        help="treat 'uncertain' verdicts as dismissed (default: kept)",
+    )
+    s.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
@@ -245,8 +375,10 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "dataset"
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
-    if a.cmd == "context" and a.alerts is None:
+    if a.cmd in ("context", "triage", "eval") and a.alerts is None:
         a.alerts = a.data_dir / "alerts.jsonl"
+    if a.cmd == "triage" and a.out is None:
+        a.out = a.data_dir / "triage.jsonl"
     a.func(a)
     return 0
 

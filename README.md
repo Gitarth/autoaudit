@@ -45,6 +45,46 @@ docstring in `autoaudit/joern/__init__.py`. Specs are data, so they can be
 written per codebase (for example inferred by an LLM) instead of maintained as
 global rule packs.
 
+## LLM triage and rule inference (bring your own key)
+
+Works with the Anthropic API and any OpenAI-compatible Chat Completions API
+(OpenAI, Azure OpenAI, vLLM, Ollama, LM Studio, OpenRouter, ...). Keys are read
+only from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the
+variable named by `--api-key-env`), never from arguments.
+
+```bash
+export ANTHROPIC_API_KEY=...                     # the client's key
+autoaudit triage --limit 50                      # try a sample first
+autoaudit triage --workers 8 --price-in <usd/Mtok> --price-out <usd/Mtok> --budget-usd 20
+autoaudit triage --provider openai --base-url http://localhost:11434/v1 --model qwen2.5-coder
+autoaudit infer-spec --src path/to/repo --base autoaudit/specs/java.json --out data/specs/repo.json
+autoaudit joern --src path/to/repo --spec data/specs/repo.json
+```
+
+- `triage` sends each alert's flow context (`autoaudit context`) and asks for a
+  verdict (`true_positive` / `false_positive` / `uncertain`), confidence and
+  reason. Results append to `data/triage.jsonl` and are cached by model, prompt
+  version and code, so re-runs only pay for new or changed alerts. Failed calls
+  are logged and retried on the next run.
+- The audited code is treated as untrusted: it is fenced with a random
+  delimiter and the model is told to ignore instructions inside it.
+- `infer-spec` grounds the model in the repository's manifests, imports and
+  entry-point code and validates the returned spec before use.
+- `--budget-usd` stops starting new requests once the estimated spend (from
+  your `--price-in/--price-out`) is reached. Token usage is always reported.
+
+## Evaluation
+
+```bash
+autoaudit eval --owasp BenchmarkJava/expectedresults-1.2.csv --triage data/triage.jsonl
+autoaudit eval --labels my-audit.csv --triage data/triage.jsonl     # alert_id,label
+```
+
+Reports the Benchmark scorecard (TPR, FPR, TPR-FPR per CWE) for the scanner
+alone and after triage, plus alert-level triage accuracy: false alerts removed
+and real alerts wrongly dismissed. Treat Benchmark as a development set; it is
+synthetic and GPL-2.0 licensed, so do not ship it.
+
 `crawl --allow-license MIT Apache-2.0 ...` restricts downloads to the given
 SPDX licenses; without it every repository is downloaded and its license is
 recorded.
