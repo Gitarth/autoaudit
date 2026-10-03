@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 API = "https://api.github.com"
 SEARCH_CAP = 1000  # GitHub search never returns more than 1000 results
 MAX_PER_PAGE = 100
-MANIFEST_FIELDS = ["full_name", "stars", "size_kb", "default_branch", "sha", "zip"]
+MANIFEST_FIELDS = ["full_name", "stars", "size_kb", "default_branch", "sha", "license", "zip"]
+NO_LICENSE = "NOASSERTION"
 
 
 class GitHub:
@@ -88,9 +89,23 @@ def download(gh: GitHub, url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
+def license_of(repo: dict) -> str:
+    """SPDX id GitHub detected for the repo, or NOASSERTION (none/unrecognised)."""
+    lic = repo.get("license") or {}
+    spdx = lic.get("spdx_id")
+    return spdx if spdx and spdx != "NOASSERTION" else NO_LICENSE
+
+
 def crawl(
-    data_dir: Path, query: str, limit: int, min_size_kb: int = 100, gh: GitHub | None = None
+    data_dir: Path,
+    query: str,
+    limit: int,
+    min_size_kb: int = 100,
+    gh: GitHub | None = None,
+    allow_licenses: set[str] | None = None,
 ) -> list[dict]:
+    """Download matching repos. Every repo's license is recorded; if
+    `allow_licenses` is given, repos under any other license are skipped."""
     gh = gh or GitHub()
     zips = data_dir / "downloads"
     zips.mkdir(parents=True, exist_ok=True)
@@ -110,6 +125,10 @@ def crawl(
             continue
         if repo["size"] < min_size_kb:
             continue
+        lic = license_of(repo)
+        if allow_licenses is not None and lic not in allow_licenses:
+            log.info("Skipping %s: license %s not allowed", name, lic)
+            continue
         try:
             sha = gh.head_sha(name, repo["default_branch"])
             url = zip_url(name, sha)
@@ -123,6 +142,7 @@ def crawl(
             "size_kb": repo["size"],
             "default_branch": repo["default_branch"],
             "sha": sha,
+            "license": lic,
             "zip": url,
         }
         rows.append(row)
@@ -136,7 +156,7 @@ def crawl(
 def _write_manifest(path: Path, rows: list[dict]) -> None:
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=MANIFEST_FIELDS)
+        w = csv.DictWriter(fh, fieldnames=MANIFEST_FIELDS, restval="")
         w.writeheader()
         w.writerows(rows)
     tmp.replace(path)

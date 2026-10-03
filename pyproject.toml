@@ -21,7 +21,11 @@ dev = ["pytest>=8", "ruff>=0.5"]
 autoaudit = "autoaudit.cli:main"
 
 [tool.setuptools]
-packages = ["autoaudit"]
+packages = ["autoaudit", "autoaudit.joern"]
+
+[tool.setuptools.package-data]
+autoaudit = ["specs/*.json"]
+"autoaudit.joern" = ["*.sc"]
 
 [tool.ruff]
 line-length = 110

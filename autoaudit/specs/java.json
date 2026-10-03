@@ -1,0 +1,68 @@
+{
+  "description": "Baseline Java web taint rules. A starting point only: per-codebase specs (e.g. LLM-inferred) should extend or replace these.",
+  "rules": [
+    {
+      "id": "sqli",
+      "name": "SQL injection",
+      "cwe": "CWE-89",
+      "severity": "error",
+      "sources": [
+        {"kind": "call", "pattern": "(getParameter|getParameterValues|getParameterMap|getHeader|getHeaders|getQueryString|getCookies|getRequestURI|getPathInfo)"},
+        {"kind": "annotated_param", "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"}
+      ],
+      "sinks": [
+        {"pattern": "(executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|queryForList|queryForObject|queryForMap|update|batchUpdate)", "arg": "1"}
+      ],
+      "sanitizers": [
+        {"pattern": ".*(escapeSql|encodeForSQL|quoteIdentifier).*"}
+      ]
+    },
+    {
+      "id": "cmdi",
+      "name": "OS command injection",
+      "cwe": "CWE-78",
+      "severity": "error",
+      "sources": [
+        {"kind": "call", "pattern": "(getParameter|getParameterValues|getHeader|getQueryString|getCookies)"},
+        {"kind": "annotated_param", "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|QueryParam|PathParam|FormParam)"}
+      ],
+      "sinks": [
+        {"pattern": "java\\.lang\\.Runtime\\.exec:.*", "arg": "*"},
+        {"pattern": "java\\.lang\\.ProcessBuilder\\.(<init>|command):.*", "arg": "*"}
+      ],
+      "sanitizers": []
+    },
+    {
+      "id": "path-traversal",
+      "name": "Path traversal",
+      "cwe": "CWE-22",
+      "severity": "error",
+      "sources": [
+        {"kind": "call", "pattern": "(getParameter|getParameterValues|getHeader|getQueryString|getCookies)"},
+        {"kind": "annotated_param", "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|QueryParam|PathParam|FormParam)"}
+      ],
+      "sinks": [
+        {"pattern": "java\\.io\\.(File|FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)\\.<init>:.*", "arg": "*"},
+        {"pattern": "java\\.nio\\.file\\.(Paths\\.get|Path\\.of|Path\\.resolve|Files\\.(newInputStream|newOutputStream|readAllBytes|readString|write|delete|copy|move)):.*", "arg": "*"}
+      ],
+      "sanitizers": [
+        {"pattern": "(getName|normalize|getCanonicalPath|getFileName)"}
+      ]
+    },
+    {
+      "id": "xss",
+      "name": "Cross-site scripting",
+      "cwe": "CWE-79",
+      "severity": "warning",
+      "sources": [
+        {"kind": "call", "pattern": "(getParameter|getParameterValues|getHeader|getQueryString|getCookies)"}
+      ],
+      "sinks": [
+        {"pattern": ".*(PrintWriter|JspWriter|ServletOutputStream|Writer)\\.(print|println|write|append|format|printf):.*", "arg": "*"}
+      ],
+      "sanitizers": [
+        {"pattern": ".*(encodeForHTML|encodeForJavaScript|escapeHtml.*|htmlEscape|escapeXml.*|sanitize).*"}
+      ]
+    }
+  ]
+}

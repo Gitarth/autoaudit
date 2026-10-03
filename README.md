@@ -1,10 +1,13 @@
 # autoaudit
 
-Builds a labeled dataset of static-analysis findings for training
-false-positive classifiers. It crawls Java projects from GitHub, scans them
-with Fortify, and turns your **audit verdicts** (`Suspicious` vs.
-`Not an Issue` by default) into samples that point at the exact source
-file, line and enclosing method.
+Finds security vulnerabilities with language-agnostic taint analysis and
+prepares each alert for triage. [Joern](https://joern.io) traces untrusted data
+from sources to sinks across functions and files. Every alert, from Joern or
+any SARIF-producing analyzer, is normalized into one format together with the
+code along its flow, ready for an analyst or an LLM to judge.
+
+It also still builds labeled datasets from audited Fortify FPRs (the original
+research use).
 
 Originally written for a SANS master's research paper (the version used in
 the paper is commit `d674af2`). Version 2 is a rewrite that fixes several
@@ -21,7 +24,32 @@ Python 3.9+. External tools are only needed for the steps that use them:
 Fortify SCA (`scan`), Java and the [CK](https://github.com/mauricioaniche/ck)
 jar (`metrics`, available as the `ck` submodule).
 
-## Pipeline
+## Taint analysis (Joern)
+
+Requires a Joern install (`joern` and `joern-parse` on `PATH`, or `JOERN_HOME`
+/ `--bin-dir`). Joern supports Java, C/C++, C#, Go, JavaScript, Kotlin, PHP,
+Python, Ruby and Swift; the language is auto-detected.
+
+```bash
+autoaudit crawl --query "language:Java webapp" --limit 200   # licenses logged in repos.csv
+autoaudit extract
+autoaudit joern                                  # every project -> data/sarif/<project>.sarif
+autoaudit joern --src path/to/repo --spec my-rules.json      # one repo, custom rules
+autoaudit alerts data/sarif                      # any SARIF (Joern, CodeQL, Opengrep...) -> data/alerts.jsonl
+autoaudit context <alert-id>                     # the numbered source->sink code for one alert
+```
+
+Rules live in a JSON spec (sources, sinks, sanitizers as regexes over call
+names / fully qualified method names); see `autoaudit/specs/java.json` and the
+docstring in `autoaudit/joern/__init__.py`. Specs are data, so they can be
+written per codebase (for example inferred by an LLM) instead of maintained as
+global rule packs.
+
+`crawl --allow-license MIT Apache-2.0 ...` restricts downloads to the given
+SPDX licenses; without it every repository is downloaded and its license is
+recorded.
+
+## Fortify dataset pipeline
 
 All artifacts go under `--data-dir` (default `./data`, or `AUTOAUDIT_DATA_DIR`).
 
@@ -90,4 +118,5 @@ Fixes to the original scripts that affect the data:
 ```bash
 pytest
 ruff check . && ruff format --check .
+AUTOAUDIT_TEST_JOERN_HOME=/path/to/joern pytest   # also run the real-Joern integration test
 ```

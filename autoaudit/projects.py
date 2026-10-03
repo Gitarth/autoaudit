@@ -58,3 +58,20 @@ def maven_projects(root: Path) -> list[Path]:
         ):
             best[project] = pom
     return [best[p].parent for p in sorted(best)]
+
+
+def source_root(project_dir: Path) -> Path:
+    """GitHub archives wrap everything in one `<repo>-<sha>/` folder; skip it."""
+    entries = [p for p in project_dir.iterdir() if not p.name.startswith(".")]
+    if len(entries) == 1 and entries[0].is_dir():
+        return entries[0]
+    return project_dir
+
+
+def source_roots(root: Path) -> list[tuple[str, Path]]:
+    """(name, source dir) for every extracted project, in any language."""
+    if not root.exists():
+        return []
+    return [
+        (p.name, source_root(p)) for p in sorted(root.iterdir()) if p.is_dir() and not p.name.startswith(".")
+    ]
