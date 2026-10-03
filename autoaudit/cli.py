@@ -6,6 +6,7 @@ autoaudit command line.
     autoaudit joern     language-agnostic taint analysis with Joern -> SARIF
     autoaudit alerts    normalize SARIF from any analyzer into alerts.jsonl
     autoaudit context   show the source-to-sink code an analyst/LLM sees for one alert
+    autoaudit prune     drop alerts whose every path runs through provably dead code (AST, no LLM)
     autoaudit triage    LLM verdict per alert (bring your own Anthropic / OpenAI-compatible key)
     autoaudit infer-spec  LLM-written taint rules tailored to one codebase
     autoaudit eval      score scanner and triage against OWASP Benchmark or hand labels
@@ -170,8 +171,36 @@ def cmd_triage(a):
         budget_usd=a.budget_usd,
         price_in=a.price_in,
         price_out=a.price_out,
+        mode=a.mode,
+        prune=a.prune,
+        max_turns=a.max_turns,
     )
     print(json.dumps(stats, indent=2))
+
+
+def cmd_prune(a):
+    from . import codeindex, feasibility
+
+    found = alerts.read_jsonl(a.alerts)
+    indexes: dict[str, codeindex.CodeIndex] = {}
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    pruned = 0
+    with open(a.out, "a", encoding="utf-8") as fh:
+        for x in found:
+            if x.project not in indexes:
+                indexes[x.project] = codeindex.CodeIndex(
+                    a.src or projects.source_root(a.data_dir / "repos" / x.project)
+                )
+            dead = feasibility.infeasible(x, indexes[x.project])
+            if dead is None:
+                continue
+            pruned += 1
+            rec = triage._record(
+                x, f"ast:{feasibility.VERSION}:{x.id}", "ast", feasibility.VERSION, feasibility.VERSION
+            )
+            rec.update(verdict="false_positive", confidence=1.0, reason=dead.reason)
+            fh.write(json.dumps(rec) + "\n")
+    print(json.dumps({"alerts": len(found), "pruned": pruned, "out": str(a.out)}, indent=2))
 
 
 def cmd_infer_spec(a):
@@ -309,8 +338,29 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--workers", type=int, default=4)
     s.add_argument("--window", type=int, default=8, help="lines of context around each flow step")
     s.add_argument("--budget-usd", type=float, help="stop starting new requests past this spend")
+    s.add_argument(
+        "--mode",
+        choices=["snippet", "agent"],
+        default="snippet",
+        help="agent: the model investigates with AST navigation tools (more tokens, more context)",
+    )
+    s.add_argument("--max-turns", type=int, default=8, help="agent mode: tool-use turns per alert")
+    s.add_argument(
+        "--no-prune",
+        dest="prune",
+        action="store_false",
+        help="also send alerts on provably dead paths to the LLM",
+    )
     _add_llm_args(s)
     s.set_defaults(func=cmd_triage)
+
+    s = sub.add_parser("prune", help="AST feasibility check; writes false_positive verdicts (no LLM)")
+    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/triage.jsonl")
+    s.add_argument(
+        "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
+    )
+    s.set_defaults(func=cmd_prune)
 
     s = sub.add_parser("infer-spec", help="LLM-written taint spec for one codebase")
     s.add_argument("--src", type=Path, required=True, help="repository root")
@@ -375,9 +425,9 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "dataset"
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
-    if a.cmd in ("context", "triage", "eval") and a.alerts is None:
+    if a.cmd in ("context", "triage", "eval", "prune") and a.alerts is None:
         a.alerts = a.data_dir / "alerts.jsonl"
-    if a.cmd == "triage" and a.out is None:
+    if a.cmd in ("triage", "prune") and a.out is None:
         a.out = a.data_dir / "triage.jsonl"
     a.func(a)
     return 0

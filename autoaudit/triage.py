@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import codeindex, feasibility
 from .alerts import Alert
 from .context import build_context
 from .llm import LLMError, Provider, Usage
@@ -155,6 +156,21 @@ def cache_key(provider: Provider, alert: Alert, context: str) -> str:
     return h.hexdigest()[:24]
 
 
+def _record(a: Alert, key: str, provider: str, model: str, version: str) -> dict:
+    return {
+        "key": key,
+        "alert_id": a.id,
+        "project": a.project,
+        "rule_id": a.rule_id,
+        "cwes": a.cwes,
+        "path": a.path,
+        "line": a.line,
+        "provider": provider,
+        "model": model,
+        "prompt_version": version,
+    }
+
+
 def load_results(path: Path) -> dict[str, dict]:
     """key -> result; later lines win, failed attempts are not cached."""
     out: dict[str, dict] = {}
@@ -178,12 +194,30 @@ def triage(
     budget_usd: float | None = None,
     price_in: float | None = None,
     price_out: float | None = None,
+    mode: str = "snippet",
+    prune: bool = True,
+    max_turns: int = 8,
 ) -> dict:
-    """Triage every alert; results are appended to `out` (JSONL) as they arrive."""
+    """Triage every alert; results are appended to `out` (JSONL) as they arrive.
+
+    mode "snippet": one call per alert with the code around each flow step.
+    mode "agent":   the model investigates with AST-backed navigation tools (see agent.py).
+    prune: first drop alerts whose every path runs through provably dead code (no LLM cost).
+    """
+    if mode not in ("snippet", "agent"):
+        raise ValueError(f"unknown mode {mode!r}")
+    if budget_usd is not None and (price_in is None or price_out is None):
+        raise ValueError("--budget-usd needs --price-in and --price-out")
     done = load_results(out)
     lock = threading.Lock()
     spent = Usage()
-    stats = {"cached": 0, "triaged": 0, "errors": 0, "skipped_budget": 0}
+    stats = {"cached": 0, "pruned": 0, "triaged": 0, "errors": 0, "skipped_budget": 0}
+    use_ast = (prune or mode == "agent") and codeindex.available()
+    if mode == "agent" and not use_ast:
+        raise RuntimeError("agent mode needs tree-sitter: pip install 'autoaudit[ast]'")
+    indexes: dict[str, codeindex.CodeIndex] = {}
+    version = PROMPT_VERSION if mode == "snippet" else f"{PROMPT_VERSION}/{agent.AGENT_PROMPT_VERSION}"
+    pruned_records = []
 
     jobs = []
     for a in alerts:
@@ -192,8 +226,29 @@ def triage(
             log.warning("No source root for project %s; skipping %s", a.project, a.id)
             stats["errors"] += 1
             continue
+        if use_ast and a.project not in indexes:
+            indexes[a.project] = codeindex.CodeIndex(root)
+        if prune and use_ast:
+            dead = feasibility.infeasible(a, indexes[a.project])
+            if dead is not None:
+                key = f"ast:{feasibility.VERSION}:{a.id}"
+                if key in done:
+                    stats["cached"] += 1
+                else:
+                    pruned_records.append(
+                        _record(a, key, "ast", feasibility.VERSION, feasibility.VERSION)
+                        | {
+                            "verdict": "false_positive",
+                            "confidence": 1.0,
+                            "reason": dead.reason,
+                            "source_controlled": None,
+                            "sanitized": None,
+                            "usage": Usage().__dict__,
+                        }
+                    )
+                continue
         context = build_context(a, root, window=window)
-        key = cache_key(provider, a, context)
+        key = cache_key(provider, a, context + "\0" + version)
         if key in done:
             stats["cached"] += 1
             continue
@@ -206,20 +261,11 @@ def triage(
     def run(a: Alert, context: str, key: str) -> dict:
         if over_budget():
             return {"key": key, "alert_id": a.id, "skipped": "budget"}
+        record = _record(a, key, provider.name, provider.model, version)
+        if mode == "agent":
+            return _run_agent(a, indexes[a.project], record)
         nonce = secrets.token_hex(6)
         system, user = build_prompt(a, context, nonce)
-        record = {
-            "key": key,
-            "alert_id": a.id,
-            "project": a.project,
-            "rule_id": a.rule_id,
-            "cwes": a.cwes,
-            "path": a.path,
-            "line": a.line,
-            "provider": provider.name,
-            "model": provider.model,
-            "prompt_version": PROMPT_VERSION,
-        }
         usage = Usage()
         try:
             reply = provider.complete(system, user)
@@ -245,10 +291,36 @@ def triage(
             spent.add(usage)
         return record
 
-    if budget_usd is not None and (price_in is None or price_out is None):
-        raise ValueError("--budget-usd needs --price-in and --price-out")
+    def _run_agent(a: Alert, index, record: dict) -> dict:
+        try:
+            inv = agent.investigate(a, index, provider, max_turns=max_turns)
+        except LLMError as err:
+            inv = agent.Investigation(verdict=None, error=str(err))
+        if inv.verdict is not None:
+            v = inv.verdict
+            record.update(
+                verdict=v.verdict,
+                confidence=v.confidence,
+                reason=v.reason,
+                source_controlled=v.source_controlled,
+                sanitized=v.sanitized,
+                model=inv.model,
+            )
+        if inv.error:
+            record["error"] = inv.error[:500]
+        record.update(
+            evidence=inv.evidence, tool_calls=inv.tool_calls, turns=inv.turns, usage=inv.usage.__dict__
+        )
+        with lock:
+            spent.add(inv.usage)
+        return record
 
     out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "a", encoding="utf-8") as fh:
+        for rec in pruned_records:
+            fh.write(json.dumps(rec) + "\n")
+            stats["pruned"] += 1
+            log.info("%s %s:%s -> pruned: %s", rec["rule_id"], rec["path"], rec["line"], rec["reason"])
     with open(out, "a", encoding="utf-8") as fh, ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(run, *job) for job in jobs]
         for fut in as_completed(futures):
@@ -275,3 +347,6 @@ def triage(
     stats["usage"] = spent.__dict__
     stats["cost_usd"] = spent.cost(price_in, price_out)
     return stats
+
+
+from . import agent  # noqa: E402  (agent imports this module's parser)

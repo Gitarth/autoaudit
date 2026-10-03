@@ -9,6 +9,7 @@ they do not end up in shell history, logs or result files.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -55,11 +56,41 @@ class Usage:
 
 
 @dataclass
+class ToolCall:
+    id: str
+    name: str
+    args: dict
+
+
+@dataclass
+class Message:
+    """Provider-neutral conversation turn.
+    role: "user" (text), "assistant" (text and/or tool_calls) or "tool" (results: [(call_id, content)],
+    plus optional text sent alongside the results)."""
+
+    role: str
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    results: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    parameters: dict  # JSON schema of the arguments object
+
+
+@dataclass
 class Reply:
     text: str
     usage: Usage
     model: str
     stop_reason: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+    def as_message(self) -> Message:
+        return Message("assistant", self.text, list(self.tool_calls))
 
 
 @dataclass
@@ -79,12 +110,15 @@ class Provider:
     name = "base"
 
     def complete(self, system: str, user: str) -> Reply:
-        reply = self._with_retries(lambda: self._request(system, user))
+        return self.chat(system, [Message("user", user)])
+
+    def chat(self, system: str, messages: list[Message], tools: list[Tool] | None = None) -> Reply:
+        reply = self._with_retries(lambda: self._chat(system, messages, tools or []))
         with self._lock:
             self.total.add(reply.usage)
         return reply
 
-    def _request(self, system: str, user: str) -> Reply:  # pragma: no cover - abstract
+    def _chat(self, system: str, messages: list[Message], tools: list[Tool]) -> Reply:  # pragma: no cover
         raise NotImplementedError
 
     def _post(self, url: str, headers: dict, body: dict) -> dict:
@@ -127,22 +161,30 @@ class AnthropicProvider(Provider):
     url: str = ANTHROPIC_URL
     name = "anthropic"
 
-    def _request(self, system: str, user: str) -> Reply:
+    def _chat(self, system: str, messages: list[Message], tools: list[Tool]) -> Reply:
         body = {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             # The system prompt is identical for every alert: cache it.
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            "messages": [{"role": "user", "content": user}],
+            "messages": [self._wire(m) for m in messages],
         }
+        if tools:
+            body["tools"] = [
+                {"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools
+            ]
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": ANTHROPIC_VERSION,
             "content-type": "application/json",
         }
         data = self._post(self.url, headers, body)
-        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+        blocks = data.get("content", [])
+        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        calls = [
+            ToolCall(b["id"], b["name"], b.get("input") or {}) for b in blocks if b.get("type") == "tool_use"
+        ]
         u = data.get("usage", {})
         usage = Usage(
             input_tokens=u.get("input_tokens", 0),
@@ -151,7 +193,22 @@ class AnthropicProvider(Provider):
             cache_write_tokens=u.get("cache_creation_input_tokens") or 0,
             requests=1,
         )
-        return Reply(text, usage, data.get("model", self.model), data.get("stop_reason"))
+        return Reply(text, usage, data.get("model", self.model), data.get("stop_reason"), calls)
+
+    @staticmethod
+    def _wire(m: Message) -> dict:
+        if m.role == "user":
+            return {"role": "user", "content": m.text}
+        if m.role == "assistant":
+            content = [{"type": "text", "text": m.text}] if m.text else []
+            content += [
+                {"type": "tool_use", "id": c.id, "name": c.name, "input": c.args} for c in m.tool_calls
+            ]
+            return {"role": "assistant", "content": content}
+        content = [{"type": "tool_result", "tool_use_id": cid, "content": out} for cid, out in m.results]
+        if m.text:
+            content.append({"type": "text", "text": m.text})
+        return {"role": "user", "content": content}
 
 
 @dataclass
@@ -161,19 +218,40 @@ class OpenAICompatProvider(Provider):
     max_tokens_field: str = "max_tokens"
     name = "openai"
 
-    def _request(self, system: str, user: str) -> Reply:
+    def _chat(self, system: str, messages: list[Message], tools: list[Tool]) -> Reply:
+        wire = [{"role": "system", "content": system}]
+        for m in messages:
+            wire.extend(self._wire(m))
         body = {
             "model": self.model,
             self.max_tokens_field: self.max_tokens,
             "temperature": self.temperature,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": wire,
         }
+        if tools:
+            body["tools"] = [
+                {
+                    "type": "function",
+                    "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+                }
+                for t in tools
+            ]
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         data = self._post(self.base_url.rstrip("/") + "/chat/completions", headers, body)
         choices = data.get("choices") or []
         if not choices:
             raise LLMError(f"openai-compatible API returned no choices: {str(data)[:300]}")
-        text = choices[0].get("message", {}).get("content") or ""
+        msg = choices[0].get("message", {})
+        calls = []
+        for c in msg.get("tool_calls") or []:
+            fn = c.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {"_invalid_arguments": fn.get("arguments")}
+            calls.append(
+                ToolCall(c.get("id", ""), fn.get("name", ""), args if isinstance(args, dict) else {})
+            )
         u = data.get("usage") or {}
         cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
         usage = Usage(
@@ -182,7 +260,32 @@ class OpenAICompatProvider(Provider):
             cache_read_tokens=cached,
             requests=1,
         )
-        return Reply(text, usage, data.get("model", self.model), choices[0].get("finish_reason"))
+        return Reply(
+            msg.get("content") or "",
+            usage,
+            data.get("model", self.model),
+            choices[0].get("finish_reason"),
+            calls,
+        )
+
+    @staticmethod
+    def _wire(m: Message) -> list[dict]:
+        if m.role == "user":
+            return [{"role": "user", "content": m.text}]
+        if m.role == "assistant":
+            out = {"role": "assistant", "content": m.text or None}
+            if m.tool_calls:
+                out["tool_calls"] = [
+                    {
+                        "id": c.id,
+                        "type": "function",
+                        "function": {"name": c.name, "arguments": json.dumps(c.args)},
+                    }
+                    for c in m.tool_calls
+                ]
+            return [out]
+        out = [{"role": "tool", "tool_call_id": cid, "content": res} for cid, res in m.results]
+        return out + ([{"role": "user", "content": m.text}] if m.text else [])
 
 
 def make_provider(

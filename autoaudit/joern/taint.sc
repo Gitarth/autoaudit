@@ -10,7 +10,8 @@
 // Regexes are matched against both a call's name and its methodFullName, so
 // rules work whether or not the frontend resolved types.
 //
-// outFile: one JSON object per flow: {"rule": ..., "flow": [{file,line,method,code}, ...]}
+// outFile: one JSON object per source->sink pair:
+//   {"rule": ..., "flows": [[{file,line,method,code}, ...], ...]}  (up to maxPaths distinct paths)
 
 import io.shiftleft.codepropertygraph.generated.nodes
 import java.io.PrintWriter
@@ -31,7 +32,7 @@ def esc(s: String): String =
 
 def str(s: String): String = "\"" + esc(s) + "\""
 
-@main def exec(inputPath: String, specFile: String, outFile: String, maxFlows: Int = 200) = {
+@main def exec(inputPath: String, specFile: String, outFile: String, maxFlows: Int = 200, maxPaths: Int = 8) = {
   if (inputPath.endsWith(".bin") || inputPath.endsWith(".cpg")) importCpg(inputPath)
   else importCode(inputPath)
 
@@ -64,27 +65,35 @@ def str(s: String): String = "\"" + esc(s) + "\""
     }
     val sanitizers = entries.filter(_.head == "SANITIZER").map(_(3))
 
-    var written = 0
-    var seen = Set.empty[(String, Option[Int], String, Option[Int])]
+    // Group paths by (source, sink): one alert per pair, keeping up to maxPaths distinct
+    // paths so downstream feasibility checks can tell "this path is dead" from
+    // "every path is dead".
+    type Key = (String, Option[Int], String, Option[Int])
+    val groups = scala.collection.mutable.LinkedHashMap.empty[Key, scala.collection.mutable.LinkedHashMap[List[(String, Option[Int])], String]]
     if (sources.nonEmpty && sinks.nonEmpty) {
-      for (path <- sinks.reachableByFlows(sources) if written < maxFlows) {
+      for (path <- sinks.reachableByFlows(sources)) {
         val els = path.elements
         if (els.nonEmpty && !els.exists(matchesAny(_, sanitizers))) {
           val locs = els.map(_.location)
-          val key = (locs.head.filename, locs.head.lineNumber.map(_.toInt),
-                     locs.last.filename, locs.last.lineNumber.map(_.toInt))
-          if (!seen.contains(key)) {
-            seen += key
-            written += 1
-            val steps = els.zip(locs).map { (n, l) =>
-              val line = l.lineNumber.map(_.toString).getOrElse("null")
-              s"""{"file":${str(l.filename)},"line":$line,"method":${str(l.methodFullName)},"code":${str(n.code.take(300))}}"""
+          val key: Key = (locs.head.filename, locs.head.lineNumber.map(_.toInt),
+                          locs.last.filename, locs.last.lineNumber.map(_.toInt))
+          if (groups.contains(key) || groups.size < maxFlows) {
+            val paths = groups.getOrElseUpdate(key, scala.collection.mutable.LinkedHashMap.empty)
+            val sig = locs.map(l => (l.filename, l.lineNumber.map(_.toInt)))
+            if (paths.size < maxPaths && !paths.contains(sig)) {
+              val steps = els.zip(locs).map { (n, l) =>
+                val line = l.lineNumber.map(_.toString).getOrElse("null")
+                s"""{"file":${str(l.filename)},"line":$line,"method":${str(l.methodFullName)},"code":${str(n.code.take(300))}}"""
+              }
+              paths(sig) = "[" + steps.mkString(",") + "]"
             }
-            out.println(s"""{"rule":${str(rule)},"flow":[${steps.mkString(",")}]}""")
           }
         }
       }
     }
+    for ((_, paths) <- groups)
+      out.println(s"""{"rule":${str(rule)},"flows":[${paths.values.mkString(",")}]}""")
+    val written = groups.size
     println(s"[autoaudit] rule $rule: ${sources.size} sources, ${sinks.size} sinks, $written flows")
   }
   out.close()

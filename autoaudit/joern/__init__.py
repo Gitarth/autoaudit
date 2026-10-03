@@ -119,7 +119,12 @@ def parse(
 
 
 def query(
-    cpg: Path, spec: dict, bin_dir: Path | None = None, timeout: int | None = None, max_flows: int = 200
+    cpg: Path,
+    spec: dict,
+    bin_dir: Path | None = None,
+    timeout: int | None = None,
+    max_flows: int = 200,
+    max_paths: int = 8,
 ) -> list[dict]:
     """Run taint.sc against a CPG and return the raw flows."""
     with tempfile.TemporaryDirectory(prefix="autoaudit-joern-") as tmp:
@@ -138,6 +143,8 @@ def query(
             f"outFile={out}",
             "--param",
             f"maxFlows={max_flows}",
+            "--param",
+            f"maxPaths={max_paths}",
         ]
         _run(cmd, timeout, cwd=tmp)  # Joern writes a workspace/ into the cwd
         if not out.exists():
@@ -181,11 +188,23 @@ def to_sarif(flows: list[dict], spec: dict, tool_version: str = "") -> dict:
             out["logicalLocations"] = [{"fullyQualifiedName": method}]
         return out
 
+    def code_flow(steps: list[dict]) -> dict:
+        return {
+            "threadFlows": [
+                {
+                    "locations": [
+                        {"location": {**loc(s), "message": {"text": s.get("code", "")}}} for s in steps
+                    ]
+                }
+            ]
+        }
+
     results = []
     for f in flows:
-        steps = f.get("flow") or []
-        if not steps:
+        paths = [p for p in (f.get("flows") or [f.get("flow") or []]) if p]
+        if not paths:
             continue
+        steps = paths[0]
         rule = rules.get(f["rule"], {"id": f["rule"]})
         src, sink = steps[0], steps[-1]
         results.append(
@@ -198,18 +217,7 @@ def to_sarif(flows: list[dict], spec: dict, tool_version: str = "") -> dict:
                     f"`{sink.get('code', '?')}` (line {sink.get('line')})"
                 },
                 "locations": [loc(sink)],
-                "codeFlows": [
-                    {
-                        "threadFlows": [
-                            {
-                                "locations": [
-                                    {"location": {**loc(s), "message": {"text": s.get("code", "")}}}
-                                    for s in steps
-                                ]
-                            }
-                        ]
-                    }
-                ],
+                "codeFlows": [code_flow(p) for p in paths],
             }
         )
     return {

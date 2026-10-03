@@ -73,6 +73,29 @@ autoaudit joern --src path/to/repo --spec data/specs/repo.json
 - `--budget-usd` stops starting new requests once the estimated spend (from
   your `--price-in/--price-out`) is reached. Token usage is always reported.
 
+## Triage like a human: AST features
+
+`pip install -e ".[ast]"` adds tree-sitter grammars (bundled, no runtime
+downloads) for Java, Python, JavaScript/TypeScript, Go, PHP and C#.
+
+- **`autoaudit prune`** removes alerts whose every reported path runs through
+  provably dead code: a branch whose condition is constant, or a `switch` case
+  that is never selected. It is conservative: if a dead tainted assignment is
+  duplicated by a live one (e.g. switch fall-through), the alert is kept. No
+  LLM, no cost; `triage` does this automatically before calling the model.
+- **`autoaudit triage --mode agent`** lets the model investigate like a
+  reviewer. It starts from every function on the path (comments stripped,
+  since comments are untrusted and can leak or plant answers) plus AST facts
+  (guarding conditions, constant locals), and can call `read_function`,
+  `find_definition`, `find_callers`, `search_code` and `read_lines` before
+  giving a verdict that cites evidence lines. `--max-turns` bounds the tool
+  use per alert.
+
+On OWASP Benchmark (Java, baseline spec), the deterministic prune step alone
+takes about 2 seconds and changes the scanner's scorecard from TPR 0.640 /
+FPR 0.418 (score +0.222) to TPR 0.640 / FPR 0.254 (score +0.386): 117 of 299
+false-positive alerts removed, no real vulnerability lost.
+
 ## Evaluation
 
 ```bash

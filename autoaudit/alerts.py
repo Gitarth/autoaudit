@@ -38,19 +38,19 @@ class Alert:
     severity: str | None = None
     cwes: list[str] = field(default_factory=list)
     flow: list[Step] = field(default_factory=list)
+    alt_flows: list[list[Step]] = field(default_factory=list)  # other paths for the same source -> sink
     label: str | None = None
 
     @property
+    def flows(self) -> list[list[Step]]:
+        return [self.flow, *self.alt_flows] if self.flow else list(self.alt_flows)
+
+    @property
     def id(self) -> str:
-        """Stable across runs: same tool, rule, location and flow -> same id."""
-        key = [
-            self.tool,
-            self.rule_id,
-            self.project,
-            self.path,
-            self.line,
-            [(s.path, s.line) for s in self.flow],
-        ]
+        """Stable across runs: same tool, rule, sink and source -> same id, whichever
+        path the analyzer happens to list first."""
+        source = (self.flow[0].path, self.flow[0].line) if self.flow else None
+        key = [self.tool, self.rule_id, self.project, self.path, self.line, source]
         return hashlib.sha256(json.dumps(key).encode()).hexdigest()[:16]
 
     def to_dict(self) -> dict:
@@ -60,6 +60,7 @@ class Alert:
     def from_dict(cls, d: dict) -> Alert:
         d = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
         d["flow"] = [Step(**s) for s in d.get("flow", [])]
+        d["alt_flows"] = [[Step(**s) for s in f] for f in d.get("alt_flows", [])]
         return cls(**d)
 
 
@@ -111,14 +112,17 @@ def read_sarif(path: Path, project: str | None = None, strip_prefix: str | None 
             rule = rule or {}
             cwes, sev = _rule_meta(rule)
             p, line, func = _location((res.get("locations") or [{}])[0])
-            flow = []
-            for cf in res.get("codeFlows", [])[:1]:
+            flows = []
+            for cf in res.get("codeFlows", []):
                 for tf in cf.get("threadFlows", [])[:1]:
+                    steps = []
                     for tfl in tf.get("locations", []):
                         loc = tfl.get("location", {})
                         sp, sl, sf = _location(loc)
                         code = loc.get("message", {}).get("text")
-                        flow.append(Step(rel(sp), sl, sf, code))
+                        steps.append(Step(rel(sp), sl, sf, code))
+                    if steps:
+                        flows.append(steps)
             alerts.append(
                 Alert(
                     tool=tool,
@@ -130,7 +134,8 @@ def read_sarif(path: Path, project: str | None = None, strip_prefix: str | None 
                     function=func,
                     severity=res.get("level") or sev,
                     cwes=cwes,
-                    flow=flow,
+                    flow=flows[0] if flows else [],
+                    alt_flows=flows[1:],
                 )
             )
     return alerts
