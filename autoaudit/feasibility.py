@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from .alerts import Alert
 from .codeindex import CodeIndex, Parsed, ancestors, enclosing_function, node_at_line, walk
 
-VERSION = "feasibility-v1"
+VERSION = "feasibility-v2"
 UNKNOWN = object()
 
 INT = {
@@ -369,7 +369,18 @@ def _live_alternative(p: Parsed, fn, line: int, dead: dict[int, str]) -> bool:
     return False
 
 
+def _function_facts(p: Parsed, fn) -> tuple[dict[int, str], dict, dict]:
+    """(dead lines, constant collection reads, constant locals) for one function."""
+    from .containers import constant_reads  # local import: containers builds on this module
+
+    env = constants(p, fn)
+    dead = dead_lines(p, fn)
+    return dead, {ln: r for ln, r in constant_reads(p, fn, env).items() if ln not in dead}, env
+
+
 def _dead_step(steps, sink: tuple[str, int | None], index: CodeIndex, cache: dict) -> DeadCode | None:
+    from .containers import live_tainted_write
+
     points = [(i, s.path, s.line) for i, s in enumerate(steps, 1) if s.line]
     points.append((None, *sink))
     for step, path, line in points:
@@ -379,10 +390,16 @@ def _dead_step(steps, sink: tuple[str, int | None], index: CodeIndex, cache: dic
             continue
         key = (path, fn.start_byte)
         if key not in cache:
-            cache[key] = dead_lines(p, fn)
-        reason = cache[key].get(line)
-        if reason and not _live_alternative(p, fn, line, cache[key]):
+            cache[key] = _function_facts(p, fn)
+        dead, reads, env = cache[key]
+        reason = dead.get(line)
+        if reason and not _live_alternative(p, fn, line, dead):
             return DeadCode(step, path, line, f"line {line} is {reason}")
+        cr = reads.get(line)
+        if cr is not None and not live_tainted_write(p, fn, cr, env, set(dead) | set(reads)):
+            return DeadCode(
+                step, path, line, f"line {line}: {cr.reason}, so `{cr.target}` is not tainted here"
+            )
     return None
 
 

@@ -78,11 +78,18 @@ autoaudit joern --src path/to/repo --spec data/specs/repo.json
 `pip install -e ".[ast]"` adds tree-sitter grammars (bundled, no runtime
 downloads) for Java, Python, JavaScript/TypeScript, Go, PHP and C#.
 
-- **`autoaudit prune`** removes alerts whose every reported path runs through
-  provably dead code: a branch whose condition is constant, or a `switch` case
-  that is never selected. It is conservative: if a dead tainted assignment is
-  duplicated by a live one (e.g. switch fall-through), the alert is kept. No
-  LLM, no cost; `triage` does this automatically before calling the model.
+- **`autoaudit prune`** removes alerts whose every reported path is provably
+  impossible, the way a reviewer rules them out by reading the function:
+  - a branch whose condition is constant, or a `switch` case never selected;
+  - a read from a local list or map that always returns a constant (e.g.
+    `l.remove(0); bar = l.get(1)` or `bar = map.get("safeKey")`), found by
+    replaying the collection's operations (Java collections, Python
+    list/dict, JavaScript arrays and `Map`).
+
+  It is conservative: it gives up when a collection escapes, is mutated in a
+  loop or branch, or uses an unmodelled method, and it keeps the alert when
+  another write could still carry taint (e.g. switch fall-through). No LLM, no
+  cost; `triage` does this automatically before calling the model.
 - **`autoaudit triage --mode agent`** lets the model investigate like a
   reviewer. It starts from every function on the path (comments stripped,
   since comments are untrusted and can leak or plant answers) plus AST facts
@@ -92,9 +99,13 @@ downloads) for Java, Python, JavaScript/TypeScript, Go, PHP and C#.
   use per alert.
 
 On OWASP Benchmark (Java, baseline spec), the deterministic prune step alone
-takes about 2 seconds and changes the scanner's scorecard from TPR 0.640 /
-FPR 0.418 (score +0.222) to TPR 0.640 / FPR 0.254 (score +0.386): 117 of 299
-false-positive alerts removed, no real vulnerability lost.
+takes a few seconds and changes the scanner's scorecard from TPR 0.640 /
+FPR 0.418 (precision 0.629, score +0.222) to TPR 0.640 / FPR 0.086 (precision
+0.892, score +0.554): 239 of 299 false-positive alerts removed (122 constant
+collection reads, 65 constant ifs, 52 constant switches), no real
+vulnerability lost. These checks were designed while studying Benchmark's
+false positives, so expect smaller gains on real code; the remaining false
+positives (sanitizers, parameterized queries) are left to LLM triage.
 
 ## Evaluation
 
