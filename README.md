@@ -98,12 +98,11 @@ downloads) for Java, Python, JavaScript/TypeScript, Go, PHP and C#.
   giving a verdict that cites evidence lines. `--max-turns` bounds the tool
   use per alert.
 
-On OWASP Benchmark (Java, baseline spec), the deterministic prune step alone
-takes a few seconds and changes the scanner's scorecard from TPR 0.640 /
-FPR 0.418 (precision 0.629, score +0.222) to TPR 0.640 / FPR 0.086 (precision
-0.892, score +0.554): 239 of 299 false-positive alerts removed (122 constant
-collection reads, 65 constant ifs, 52 constant switches), no real
-vulnerability lost. These checks were designed while studying Benchmark's
+On OWASP Benchmark (Java, bundled spec), Joern finds TPR 0.905 at FPR 0.576
+(precision 0.635); the deterministic prune step (a few seconds, no LLM) brings
+that to TPR 0.905 / FPR 0.113 (precision 0.899, score +0.792) without losing a
+real vulnerability, by removing provably infeasible flows (constant collection
+reads, constant ifs, constant switches). These checks were designed while studying Benchmark's
 false positives, so expect smaller gains on real code; the remaining false
 positives (sanitizers, parameterized queries) are left to LLM triage.
 

@@ -1,5 +1,5 @@
 {
-  "description": "Baseline Java web taint rules. A starting point only: per-codebase specs (e.g. LLM-inferred) should extend or replace these.",
+  "description": "Baseline Java web taint rules. All rules share one servlet/JAX-RS/Spring source list. A starting point only: per-codebase specs (e.g. LLM-inferred) should extend or replace these.",
   "rules": [
     {
       "id": "sqli",
@@ -9,7 +9,7 @@
       "sources": [
         {
           "kind": "call",
-          "pattern": "(getParameter|getParameterValues|getParameterMap|getHeader|getHeaders|getQueryString|getCookies|getRequestURI|getPathInfo)"
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
         },
         {
           "kind": "annotated_param",
@@ -36,11 +36,11 @@
       "sources": [
         {
           "kind": "call",
-          "pattern": "(getParameter|getParameterValues|getHeader|getQueryString|getCookies)"
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
         },
         {
           "kind": "annotated_param",
-          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|QueryParam|PathParam|FormParam)"
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
         }
       ],
       "sinks": [
@@ -63,11 +63,11 @@
       "sources": [
         {
           "kind": "call",
-          "pattern": "(getParameter|getParameterValues|getHeader|getQueryString|getCookies)"
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
         },
         {
           "kind": "annotated_param",
-          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|QueryParam|PathParam|FormParam)"
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
         }
       ],
       "sinks": [
@@ -94,7 +94,11 @@
       "sources": [
         {
           "kind": "call",
-          "pattern": "(getParameter|getParameterValues|getHeader|getQueryString|getCookies)"
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
+        },
+        {
+          "kind": "annotated_param",
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
         }
       ],
       "sinks": [
