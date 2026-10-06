@@ -368,6 +368,19 @@ class CodeIndex:
         self._ensure_index()
         return [c for c in self._calls if c.callee == name]
 
+    def callers_in(self, rel: str) -> list[CallSite]:
+        """Every call site in one file (parses just that file)."""
+        p = self.parsed(rel)
+        if p is None:
+            return []
+        out = []
+        for n in walk(p.root):
+            if n.type in p.spec.calls:
+                callee = call_name(p, n)
+                if callee:
+                    out.append(CallSite(callee, rel, n.start_point[0] + 1, "", ""))
+        return out
+
     def search(self, pattern: str, limit: int = 30) -> list[tuple[str, int, str]]:
         rx = re.compile(pattern)
         hits = []

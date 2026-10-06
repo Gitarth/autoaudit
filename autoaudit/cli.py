@@ -10,6 +10,7 @@ autoaudit command line.
     autoaudit triage    LLM verdict per alert (bring your own Anthropic / OpenAI-compatible key)
     autoaudit infer-spec  LLM-written taint rules tailored to one codebase
     autoaudit eval      score scanner and triage against OWASP Benchmark or hand labels
+    autoaudit diagnose  rank calls typical of MISSED real vulns that no rule covers (rule gaps)
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -240,6 +241,28 @@ def cmd_eval(a):
     print(json.dumps(report, indent=2))
 
 
+def cmd_diagnose(a):
+    from . import diagnose
+    from .codeindex import CodeIndex
+
+    found = alerts.read_jsonl(a.alerts)
+    spec = joern.load_spec(a.spec)
+    index = CodeIndex(a.src)
+    if a.owasp:
+        expected = evaluate.read_owasp_expected(a.owasp)
+        truth = diagnose.owasp_truth(expected)
+        by_name = {p.stem: p.relative_to(a.src).as_posix() for p in a.src.rglob("BenchmarkTest*.*")}
+        report = diagnose.diagnose(found, truth, index, spec, file_of=by_name, top=a.top)
+    elif a.truth:
+        report = diagnose.diagnose(found, diagnose.read_truth(a.truth), index, spec, top=a.top)
+    else:
+        sys.exit("give --owasp or --truth")
+    if a.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(diagnose.format_report(report))
+
+
 def cmd_stats(a):
     fields = ["project", "total", *sorted(ANALYSIS_VALUES), "Unaudited"]
     w = csv.DictWriter(sys.stdout, fieldnames=fields, restval=0, extrasaction="ignore")
@@ -382,6 +405,16 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_eval)
 
+    s = sub.add_parser("diagnose", help="find rule gaps from missed real vulnerabilities")
+    s.add_argument("--src", type=Path, required=True, help="source root the alerts refer to")
+    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC, help="the spec that produced the alerts")
+    s.add_argument("--owasp", type=Path, help="OWASP Benchmark expectedresults-*.csv")
+    s.add_argument("--truth", type=Path, help="CSV with columns path,cwe,real")
+    s.add_argument("--top", type=int, default=15)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_diagnose)
+
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
     s.add_argument("--fpr-glob", default="target/fortify/*.fpr")
@@ -425,7 +458,7 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "dataset"
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
-    if a.cmd in ("context", "triage", "eval", "prune") and a.alerts is None:
+    if a.cmd in ("context", "triage", "eval", "prune", "diagnose") and a.alerts is None:
         a.alerts = a.data_dir / "alerts.jsonl"
     if a.cmd in ("triage", "prune") and a.out is None:
         a.out = a.data_dir / "triage.jsonl"
