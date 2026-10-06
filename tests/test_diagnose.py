@@ -9,7 +9,7 @@ from autoaudit.codeindex import CodeIndex
 pytest.importorskip("tree_sitter_java")
 
 FOUND = 'class A {{ void f(R r) {{ s.executeQuery(r.getParameter("q")); {extra} }} }}'
-MISSED = 'class B {{ void f(R r) {{ t.query(r.getParameter("q"), m); {extra} }} }}'
+MISSED = 'class B {{ void f(R r) {{ t.runSql(r.getParameter("q"), m); {extra} }} }}'
 
 
 def test_diagnose_ranks_uncovered_calls_of_missed_files(tmp_path):
@@ -28,7 +28,7 @@ def test_diagnose_ranks_uncovered_calls_of_missed_files(tmp_path):
     r = rep["CWE-89"]
     assert (r["real"], r["missed"]) == (8, 4)
     names = [c["call"] for c in r["candidates"]]
-    assert names[0] == "query"  # in every miss, in no found file, matched by no rule
+    assert names[0] == "runSql"  # in every miss, in no found file, matched by no rule
     assert "getParameter" not in names  # already a source
     assert "log" not in names  # equally common in found files -> low lift ...
     assert "CWE-78" not in rep  # ... and CWEs without alerts are not diagnosed
