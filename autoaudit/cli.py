@@ -12,6 +12,7 @@ autoaudit command line.
     autoaudit eval      score scanner and triage against OWASP Benchmark or hand labels
     autoaudit diagnose  rank calls typical of MISSED real vulns that no rule covers (rule gaps)
     autoaudit summarize-libs  LLM flow summaries for library calls on flows (Joern semantics)
+    autoaudit sweep     dangerous calls no flow reaches, minus provably harmless ones -> alerts
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -34,6 +35,16 @@ from pathlib import Path
 from . import alerts, c2v, crawl, dataset, evaluate, joern, llm, metrics, projects, scan, specgen, triage
 from .context import build_context
 from .fpr import ANALYSIS_VALUES, FPR
+
+
+def _read_alerts(paths: list[Path]) -> list:
+    out, seen = [], set()
+    for p in paths:
+        for x in alerts.read_jsonl(p):
+            if x.id not in seen:
+                seen.add(x.id)
+                out.append(x)
+    return out
 
 
 def _projects(data: Path) -> list[tuple[str, Path]]:
@@ -115,7 +126,7 @@ def cmd_alerts(a):
 
 
 def cmd_context(a):
-    match = [x for x in alerts.read_jsonl(a.alerts) if x.id.startswith(a.alert_id)]
+    match = [x for x in _read_alerts(a.alerts) if x.id.startswith(a.alert_id)]
     if len(match) != 1:
         sys.exit(f"{len(match)} alerts match id {a.alert_id!r}")
     alert = match[0]
@@ -154,7 +165,7 @@ def _add_llm_args(s):
 
 
 def cmd_triage(a):
-    found = alerts.read_jsonl(a.alerts)
+    found = _read_alerts(a.alerts)
     if a.rule:
         found = [x for x in found if x.rule_id in set(a.rule)]
     if a.limit:
@@ -184,7 +195,7 @@ def cmd_triage(a):
 def cmd_prune(a):
     from . import codeindex, feasibility
 
-    found = alerts.read_jsonl(a.alerts)
+    found = _read_alerts(a.alerts)
     indexes: dict[str, codeindex.CodeIndex] = {}
     a.out.parent.mkdir(parents=True, exist_ok=True)
     pruned = 0
@@ -226,7 +237,7 @@ def cmd_infer_spec(a):
 
 
 def cmd_eval(a):
-    found = alerts.read_jsonl(a.alerts)
+    found = _read_alerts(a.alerts)
     results = evaluate.read_triage(a.triage) if a.triage else None
     report = {}
     if a.owasp:
@@ -248,7 +259,7 @@ def cmd_diagnose(a):
     from . import diagnose
     from .codeindex import CodeIndex
 
-    found = alerts.read_jsonl(a.alerts)
+    found = _read_alerts(a.alerts)
     spec = joern.load_spec(a.spec)
     index = CodeIndex(a.src)
     if a.owasp:
@@ -291,6 +302,25 @@ def cmd_summarize_libs(a):
             indent=2,
         )
     )
+
+
+def cmd_sweep(a):
+    from . import sweep
+    from .codeindex import CodeIndex
+
+    paths = []
+    for p in a.sinks:
+        paths += sorted(p.glob("*.sinks.jsonl")) if p.is_dir() else [p]
+    sinks = sweep.read_sinks(paths)
+    indexes = {}
+    for proj in {s["project"] for s in sinks}:
+        indexes[proj] = CodeIndex(a.src or projects.source_root(a.data_dir / "repos" / proj))
+    found, stats = sweep.sweep(
+        sinks, _read_alerts(a.alerts), joern.load_spec(a.spec), indexes, require_taint=a.require_taint
+    )
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    alerts.write_jsonl(found, a.out)
+    print(json.dumps({**stats, "out": str(a.out)}, indent=2))
 
 
 def cmd_stats(a):
@@ -376,13 +406,25 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("context", help="print the flow context for one alert")
     s.add_argument("alert_id", help="alert id (a unique prefix is enough)")
-    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--alerts",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="alert files (default: <data-dir>/alerts.jsonl); e.g. add sweep.jsonl",
+    )
     s.add_argument("--src", type=Path, help="source root (default: <data-dir>/repos/<project>)")
     s.add_argument("--window", type=int, default=6, help="lines of context around each step")
     s.set_defaults(func=cmd_context)
 
     s = sub.add_parser("triage", help="LLM verdict for each alert; appends to <data-dir>/triage.jsonl")
-    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--alerts",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="alert files (default: <data-dir>/alerts.jsonl); e.g. add sweep.jsonl",
+    )
     s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/triage.jsonl")
     s.add_argument(
         "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
@@ -409,7 +451,13 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_triage)
 
     s = sub.add_parser("prune", help="AST feasibility check; writes false_positive verdicts (no LLM)")
-    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--alerts",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="alert files (default: <data-dir>/alerts.jsonl); e.g. add sweep.jsonl",
+    )
     s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/triage.jsonl")
     s.add_argument(
         "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
@@ -427,7 +475,13 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_infer_spec)
 
     s = sub.add_parser("eval", help="score scanner and triage against ground truth")
-    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--alerts",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="alert files (default: <data-dir>/alerts.jsonl); e.g. add sweep.jsonl",
+    )
     s.add_argument("--triage", type=Path, help="triage results (JSONL)")
     s.add_argument("--owasp", type=Path, help="OWASP Benchmark expectedresults-*.csv")
     s.add_argument("--labels", type=Path, help="hand labels CSV: alert_id,label")
@@ -441,7 +495,13 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("diagnose", help="find rule gaps from missed real vulnerabilities")
     s.add_argument("--src", type=Path, required=True, help="source root the alerts refer to")
-    s.add_argument("--alerts", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--alerts",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="alert files (default: <data-dir>/alerts.jsonl); e.g. add sweep.jsonl",
+    )
     s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC, help="the spec that produced the alerts")
     s.add_argument("--owasp", type=Path, help="OWASP Benchmark expectedresults-*.csv")
     s.add_argument("--truth", type=Path, help="CSV with columns path,cwe,real")
@@ -459,6 +519,26 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=120, help="most frequent methods to classify")
     _add_llm_args(s)
     s.set_defaults(func=cmd_summarize_libs)
+
+    s = sub.add_parser("sweep", help="flow-less alerts for dangerous calls that no flow reaches")
+    s.add_argument("sinks", type=Path, nargs="+", help="*.sinks.jsonl files or dirs (written by joern)")
+    s.add_argument(
+        "--alerts",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="existing alerts (default: <data-dir>/alerts.jsonl)",
+    )
+    s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC)
+    s.add_argument("--src", type=Path, help="source root (default: <data-dir>/repos/<project>)")
+    s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/sweep.jsonl")
+    s.add_argument(
+        "--all-nonconstant",
+        dest="require_taint",
+        action="store_false",
+        help="keep sinks even when no argument syntactically derives from user input",
+    )
+    s.set_defaults(func=cmd_sweep)
 
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
@@ -503,8 +583,10 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "dataset"
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
-    if a.cmd in ("context", "triage", "eval", "prune", "diagnose") and a.alerts is None:
-        a.alerts = a.data_dir / "alerts.jsonl"
+    if a.cmd in ("context", "triage", "eval", "prune", "diagnose", "sweep") and a.alerts is None:
+        a.alerts = [a.data_dir / "alerts.jsonl"]
+    if a.cmd == "sweep" and a.out is None:
+        a.out = a.data_dir / "sweep.jsonl"
     if a.cmd in ("triage", "prune") and a.out is None:
         a.out = a.data_dir / "triage.jsonl"
     a.func(a)

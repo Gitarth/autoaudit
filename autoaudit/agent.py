@@ -217,7 +217,14 @@ def opening(alert: Alert, index: CodeIndex, box: Toolbox, max_chars: int = 30_00
         f"Alert {alert.id}\nRule: {alert.rule_id} ({', '.join(alert.cwes) or 'no CWE'})\n"
         f"Analyzer: {alert.tool}\nMessage: {alert.message}\nSink: {alert.path}:{alert.line}\n\n"
         f"Facts from the syntax tree (computed, reliable):\n{facts_text}\n\n"
-        f"Functions on the reported path:\n{box.fence(code)}"
+        + (
+            "No source-to-sink flow was reported for this sink: it was flagged because its arguments are "
+            "not constant. Trace backwards from the sink arguments (read_function, find_callers) to decide "
+            "whether attacker-controlled data can reach them.\n\n"
+            if not alert.flow
+            else ""
+        )
+        + f"Functions on the reported path:\n{box.fence(code)}"
     )
 
 
