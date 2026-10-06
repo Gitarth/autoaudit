@@ -125,8 +125,13 @@ def query(
     timeout: int | None = None,
     max_flows: int = 200,
     max_paths: int = 8,
+    semantics: Path | None = None,
+    externals_out: Path | None = None,
+    sinks_out: Path | None = None,
 ) -> list[dict]:
-    """Run taint.sc against a CPG and return the raw flows."""
+    """Run taint.sc against a CPG and return the raw flows.
+    semantics: extra library flow summaries (see taint.sc); externals_out / sinks_out: where to
+    write the library methods seen on flows and every sink call site."""
     with tempfile.TemporaryDirectory(prefix="autoaudit-joern-") as tmp:
         tmp = Path(tmp)
         (tmp / "spec.tsv").write_text(spec_to_tsv(spec), encoding="utf-8")
@@ -146,6 +151,14 @@ def query(
             "--param",
             f"maxPaths={max_paths}",
         ]
+        # Joern's argument parser rejects empty values, so optional files are only passed when set.
+        for name, value in (
+            ("semanticsFile", semantics),
+            ("externalsFile", externals_out),
+            ("sinksFile", sinks_out),
+        ):
+            if value:
+                cmd += ["--param", f"{name}={Path(value).resolve()}"]
         _run(cmd, timeout, cwd=tmp)  # Joern writes a workspace/ into the cwd
         if not out.exists():
             raise RuntimeError("Joern finished without writing flows")
@@ -160,7 +173,14 @@ def _run(cmd: list[str], timeout: int | None, cwd: Path | None = None) -> None:
         if line.startswith("[autoaudit]"):
             log.info(line)
     if proc.returncode:
-        tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-15:])
+        out = (proc.stderr or "") + "\n" + (proc.stdout or "")
+        # report the exception messages, not the JVM stack frames
+        useful = [
+            ln
+            for ln in out.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("at ") and "JAVA_TOOL_OPTIONS" not in ln
+        ]
+        tail = "\n".join(useful[-15:])
         raise RuntimeError(f"{Path(cmd[0]).name} failed ({proc.returncode}):\n{tail}")
 
 
@@ -248,13 +268,25 @@ def scan(
     language: str | None = None,
     timeout: int | None = None,
     max_flows: int = 200,
+    semantics: Path | None = None,
 ) -> int:
     """Parse + query one source tree; returns the number of flows found.
     `max_flows` caps flows per rule so one noisy rule cannot flood a large repo."""
     work_dir.mkdir(parents=True, exist_ok=True)
     cpg = work_dir / f"{out_sarif.stem}.cpg.bin"
     parse(src, cpg, bin_dir, language, timeout)
-    flows = query(cpg, spec, bin_dir, timeout, max_flows)
+    out_sarif.parent.mkdir(parents=True, exist_ok=True)
+    stem = out_sarif.with_suffix("")
+    flows = query(
+        cpg,
+        spec,
+        bin_dir,
+        timeout,
+        max_flows,
+        semantics=semantics,
+        externals_out=Path(f"{stem}.externals.tsv"),
+        sinks_out=Path(f"{stem}.sinks.jsonl"),
+    )
     out_sarif.parent.mkdir(parents=True, exist_ok=True)
     out_sarif.write_text(json.dumps(to_sarif(flows, spec), indent=1), encoding="utf-8")
     return len(flows)

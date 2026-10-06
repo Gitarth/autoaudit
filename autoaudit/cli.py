@@ -11,6 +11,7 @@ autoaudit command line.
     autoaudit infer-spec  LLM-written taint rules tailored to one codebase
     autoaudit eval      score scanner and triage against OWASP Benchmark or hand labels
     autoaudit diagnose  rank calls typical of MISSED real vulns that no rule covers (rule gaps)
+    autoaudit summarize-libs  LLM flow summaries for library calls on flows (Joern semantics)
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -88,6 +89,7 @@ def cmd_joern(a):
                 a.language,
                 a.timeout,
                 a.max_flows,
+                a.semantics,
             )
             counts[name] = n
             logging.info("%s: %d flows", name, n)
@@ -264,6 +266,33 @@ def cmd_diagnose(a):
         print(diagnose.format_report(report))
 
 
+def cmd_summarize_libs(a):
+    from . import libsum
+
+    paths = []
+    for p in a.externals:
+        paths += sorted(p.glob("*.externals.tsv")) if p.is_dir() else [p]
+    spec = joern.load_spec(a.spec)
+    results, usage = libsum.summarize(libsum.read_externals(paths), spec, _provider(a), limit=a.limit)
+    new_spec = libsum.write_outputs(results, spec, a.out)
+    if a.spec_out:
+        a.spec_out.write_text(json.dumps(new_spec, indent=2))
+    counts = Counter(r["flow"] for r in results)
+    print(
+        json.dumps(
+            {
+                "classified": len(results),
+                **counts,
+                "semantics": str(a.out),
+                "spec": str(a.spec_out) if a.spec_out else None,
+                "usage": usage.__dict__,
+                "cost_usd": usage.cost(a.price_in, a.price_out),
+            },
+            indent=2,
+        )
+    )
+
+
 def cmd_stats(a):
     fields = ["project", "total", *sorted(ANALYSIS_VALUES), "Unaudited"]
     w = csv.DictWriter(sys.stdout, fieldnames=fields, restval=0, extrasaction="ignore")
@@ -337,6 +366,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--language", help="force a Joern frontend, e.g. java, pythonsrc, jssrc")
     s.add_argument("--timeout", type=int, default=None, help="seconds per Joern step")
     s.add_argument("--max-flows", type=int, default=200, help="cap on reported flows per rule per project")
+    s.add_argument("--semantics", type=Path, help="library flow summaries (from summarize-libs)")
     s.set_defaults(func=cmd_joern)
 
     s = sub.add_parser("alerts", help="SARIF files (any analyzer) -> alerts.jsonl")
@@ -418,6 +448,17 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--top", type=int, default=15)
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_diagnose)
+
+    s = sub.add_parser("summarize-libs", help="LLM flow summaries for library methods on reported flows")
+    s.add_argument("externals", type=Path, nargs="+", help="*.externals.tsv files or dirs (written by joern)")
+    s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC)
+    s.add_argument(
+        "--out", type=Path, required=True, help="semantics file to write (pass to joern --semantics)"
+    )
+    s.add_argument("--spec-out", type=Path, help="write the spec with LLM-identified sanitizers added")
+    s.add_argument("--limit", type=int, default=120, help="most frequent methods to classify")
+    _add_llm_args(s)
+    s.set_defaults(func=cmd_summarize_libs)
 
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
