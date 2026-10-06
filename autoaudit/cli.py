@@ -13,6 +13,7 @@ autoaudit command line.
     autoaudit diagnose  rank calls typical of MISSED real vulns that no rule covers (rule gaps)
     autoaudit summarize-libs  LLM flow summaries for library calls on flows (Joern semantics)
     autoaudit sweep     dangerous calls no flow reaches, minus provably harmless ones -> alerts
+    autoaudit opengrep  run Opengrep / Semgrep CE with autoaudit's own rules -> SARIF
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -111,18 +112,56 @@ def cmd_joern(a):
 
 
 def cmd_alerts(a):
+    from . import ensemble
+
     paths = []
     for p in a.sarif:
         paths += sorted(p.glob("*.sarif")) if p.is_dir() else [p]
     found = []
     for p in paths:
-        found += alerts.read_sarif(p, project=p.stem)
+        # <project>.sarif, <project>.opengrep.sarif, ... all belong to <project>
+        found += alerts.read_sarif(p, project=p.name.split(".")[0])
+    before = len(found)
+    if not a.no_merge:
+        found = ensemble.merge(found)
+    attached = 0
+    if a.src or a.attach_flows:
+        from .codeindex import CodeIndex
+
+        roots = {x.project: a.src or projects.source_root(a.data_dir / "repos" / x.project) for x in found}
+        indexes = {proj: CodeIndex(root) for proj, root in roots.items() if root.exists()}
+        attached = ensemble.attach_flows(found, joern.load_spec(a.spec), indexes)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     alerts.write_jsonl(found, a.out)
-    by_rule: dict[str, int] = {}
-    for x in found:
-        by_rule[x.rule_id] = by_rule.get(x.rule_id, 0) + 1
-    print(json.dumps({"alerts": len(found), "files": len(paths), "by_rule": by_rule}, indent=2))
+    by_rule = Counter(x.rule_id for x in found)
+    by_tool = Counter(x.tool for x in found)
+    agreed = sum(1 for x in found if x.also_reported_by)
+    print(
+        json.dumps(
+            {
+                "alerts": len(found),
+                "before_merge": before,
+                "files": len(paths),
+                "by_tool": by_tool,
+                "reported_by_several_tools": agreed,
+                "flows_attached": attached,
+                "by_rule": by_rule,
+            },
+            indent=2,
+        )
+    )
+
+
+def cmd_opengrep(a):
+    from . import ensemble
+
+    roots = (
+        [(a.name or a.src.resolve().name, a.src)] if a.src else projects.source_roots(a.data_dir / "repos")
+    )
+    for name, src in roots:
+        out = a.data_dir / "sarif" / f"{name}.opengrep.sarif"
+        ensemble.run_opengrep(src, out, a.config, a.binary, a.timeout)
+        print(f"{name}: {out}")
 
 
 def cmd_context(a):
@@ -237,7 +276,7 @@ def cmd_infer_spec(a):
 
 
 def cmd_eval(a):
-    found = _read_alerts(a.alerts)
+    found = [x for x in _read_alerts(a.alerts) if 1 + len(x.also_reported_by) >= a.min_tools]
     results = evaluate.read_triage(a.triage) if a.triage else None
     report = {}
     if a.owasp:
@@ -399,9 +438,25 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--semantics", type=Path, help="library flow summaries (from summarize-libs)")
     s.set_defaults(func=cmd_joern)
 
+    s = sub.add_parser("opengrep", help="run Opengrep / Semgrep CE with autoaudit's own rules")
+    s.add_argument("--src", type=Path, help="scan this directory instead of <data-dir>/repos/*")
+    s.add_argument("--name", help="project name for --src (default: directory name)")
+    s.add_argument("--config", type=Path, help="rules file/dir (default: autoaudit/rules)")
+    s.add_argument("--binary", help="opengrep or semgrep executable (default: whichever is installed)")
+    s.add_argument("--timeout", type=int, default=None)
+    s.set_defaults(func=cmd_opengrep)
+
     s = sub.add_parser("alerts", help="SARIF files (any analyzer) -> alerts.jsonl")
     s.add_argument("sarif", type=Path, nargs="+", help="SARIF files or directories")
     s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--no-merge", action="store_true", help="keep duplicate alerts from different tools")
+    s.add_argument("--src", type=Path, help="source root, to attach approximate flows to flow-less alerts")
+    s.add_argument(
+        "--attach-flows",
+        action="store_true",
+        help="attach flows using <data-dir>/repos/<project> as source roots",
+    )
+    s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC, help="rules used to attach flows")
     s.set_defaults(func=cmd_alerts)
 
     s = sub.add_parser("context", help="print the flow context for one alert")
@@ -485,6 +540,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--triage", type=Path, help="triage results (JSONL)")
     s.add_argument("--owasp", type=Path, help="OWASP Benchmark expectedresults-*.csv")
     s.add_argument("--labels", type=Path, help="hand labels CSV: alert_id,label")
+    s.add_argument(
+        "--min-tools",
+        type=int,
+        default=1,
+        help="only count alerts reported by at least this many tools (corroboration)",
+    )
     s.add_argument(
         "--drop-uncertain",
         dest="keep_uncertain",

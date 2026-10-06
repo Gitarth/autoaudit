@@ -40,6 +40,7 @@ class Alert:
     flow: list[Step] = field(default_factory=list)
     alt_flows: list[list[Step]] = field(default_factory=list)  # other paths for the same source -> sink
     label: str | None = None
+    also_reported_by: list[str] = field(default_factory=list)  # "<tool>:<rule>" of merged duplicates
 
     @property
     def flows(self) -> list[list[Step]]:

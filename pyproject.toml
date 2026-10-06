@@ -35,7 +35,7 @@ autoaudit = "autoaudit.cli:main"
 packages = ["autoaudit", "autoaudit.joern"]
 
 [tool.setuptools.package-data]
-autoaudit = ["specs/*.json"]
+autoaudit = ["specs/*.json", "rules/*.yml"]
 "autoaudit.joern" = ["*.sc"]
 
 [tool.ruff]
