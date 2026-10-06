@@ -206,7 +206,8 @@ def cmd_prune(a):
 
 def cmd_infer_spec(a):
     base = joern.load_spec(a.base) if a.base else None
-    spec, usage = specgen.infer_spec(a.src, _provider(a), base)
+    evidence = json.loads(a.evidence.read_text()) if a.evidence else None
+    spec, usage = specgen.infer_spec(a.src, _provider(a), base, evidence)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(spec, indent=2))
     print(
@@ -388,7 +389,10 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("infer-spec", help="LLM-written taint spec for one codebase")
     s.add_argument("--src", type=Path, required=True, help="repository root")
     s.add_argument("--out", type=Path, required=True, help="where to write the spec JSON")
-    s.add_argument("--base", type=Path, help="baseline spec to adapt (e.g. autoaudit/specs/java.json)")
+    s.add_argument("--base", type=Path, help="baseline spec to extend; the result is merged into it")
+    s.add_argument(
+        "--evidence", type=Path, help="`autoaudit diagnose --json` report of missed vulnerabilities"
+    )
     _add_llm_args(s)
     s.set_defaults(func=cmd_infer_spec)
 

@@ -149,8 +149,51 @@ def repo_facts(
     return text[:max_chars]
 
 
-def infer_spec(root: Path, provider: Provider, base: dict | None = None) -> tuple[dict, Usage]:
-    """Ask the model for a spec, validate it, and retry once with the validation error."""
+def merge_specs(base: dict, extra: dict) -> dict:
+    """Union of two specs: rules matched by id (else by CWE); patterns deduplicated.
+    Merging into a base means an inferred spec can add coverage but never drop it."""
+    out = json.loads(json.dumps(base))
+    by_id = {r["id"]: r for r in out["rules"]}
+    by_cwe = {r.get("cwe"): r for r in out["rules"] if r.get("cwe")}
+    for r in extra.get("rules", []):
+        target = by_id.get(r["id"]) or by_cwe.get(r.get("cwe"))
+        if target is None:
+            out["rules"].append(json.loads(json.dumps(r)))
+            by_id[r["id"]] = out["rules"][-1]
+            continue
+        for key in ("sources", "sinks", "sanitizers"):
+            have = {json.dumps(x, sort_keys=True) for x in target.get(key, [])}
+            for item in r.get(key, []):
+                if json.dumps(item, sort_keys=True) not in have:
+                    target.setdefault(key, []).append(item)
+    joern.validate_spec(out)
+    return out
+
+
+def evidence_text(report: dict, limit: int = 8) -> str:
+    """Render a diagnose report (missed vulnerabilities and uncovered calls) for the prompt."""
+    parts = []
+    for cwe, r in report.items():
+        if not r.get("missed"):
+            continue
+        parts.append(
+            f"{cwe}: {r['missed']} of {r['real']} known real vulnerabilities were MISSED. "
+            "Calls typical of the missed code that no current rule covers:"
+        )
+        for c in r.get("candidates", [])[:limit]:
+            parts.append(
+                f"  - {c['call']} (in {c['missed_share']:.0%} of misses, "
+                f"{c['found_share']:.0%} of detected ones)"
+            )
+            parts.extend(f"      {e}" for e in c.get("examples", [])[:2])
+    return "\n".join(parts)
+
+
+def infer_spec(
+    root: Path, provider: Provider, base: dict | None = None, evidence: dict | None = None
+) -> tuple[dict, Usage]:
+    """Ask the model for a spec, validate it, and retry once with the validation error.
+    With `base`, the answer is merged into it; `evidence` is a diagnose report."""
     facts = repo_facts(root)
     user = f"<repository_facts>\n{facts}\n</repository_facts>"
     if base:
@@ -158,6 +201,15 @@ def infer_spec(root: Path, provider: Provider, base: dict | None = None) -> tupl
             "\n\nStart from these baseline rules; keep what applies, adapt patterns to this "
             f"codebase and add what is missing:\n{json.dumps(base)}"
         )
+    if evidence:
+        text = evidence_text(evidence)
+        if text:
+            user += (
+                "\n\nEvidence from labelled results (untrusted repository content inside):\n"
+                f"<evidence>\n{text}\n</evidence>\nDecide which of these calls are sources, sinks or "
+                "sanitizers for the listed CWEs and add rules for them. Ignore calls that are only "
+                "incidental (logging, setup) to the vulnerability."
+            )
     usage = Usage()
     last_err = None
     for _ in range(2):
@@ -175,6 +227,8 @@ def infer_spec(root: Path, provider: Provider, base: dict | None = None) -> tupl
             try:
                 spec = json.loads(raw)
                 joern.validate_spec(spec)
+                if base:
+                    spec = merge_specs(base, spec)
                 spec["description"] = f"Inferred by {provider.name}/{reply.model} for {root.name}"
                 return spec, usage
             except (json.JSONDecodeError, joern.SpecError) as err:

@@ -86,13 +86,27 @@ def diagnose(
         for cwe in a.cwes:
             flagged[cwe].add(_key(a.path, owasp))
 
-    calls_in: dict[str, set[str]] = {}
+    sites_in: dict[str, list] = {}
+
+    def sites(key: str) -> list:
+        if key not in sites_in:
+            rel = file_of.get(key) if owasp else key
+            sites_in[key] = index.callers_in(rel) if rel else []
+        return sites_in[key]
 
     def calls(key: str) -> set[str]:
-        if key not in calls_in:
-            rel = file_of.get(key) if owasp else key
-            calls_in[key] = {c.callee for c in index.callers_in(rel)} if rel else set()
-        return calls_in[key]
+        return {c.callee for c in sites(key)}
+
+    def examples(name: str, keys: list[str], n: int = 3) -> list[str]:
+        out = []
+        for k in keys:
+            for c in sites(k):
+                if c.callee == name:
+                    out.append(f"{c.path}:{c.line}: {c.code}")
+                    break
+            if len(out) >= n:
+                break
+        return out
 
     report = {}
     for cwe in sorted({t.cwe for t in truth} & set(flagged), key=lambda c: int(c[4:])):
@@ -124,6 +138,8 @@ def diagnose(
                 }
             )
         cands.sort(key=lambda c: (-c["lift"], -c["missed_files"]))
+        for c in cands[:top]:
+            c["examples"] = examples(c["call"], missed)
         report[cwe] = {
             "real": len(cases),
             "missed": len(missed),

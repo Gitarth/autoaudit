@@ -18,7 +18,7 @@
       ],
       "sinks": [
         {
-          "pattern": "(executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|queryForList|queryForObject|queryForMap|update|batchUpdate)",
+          "pattern": "(executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|query|queryForRowSet|queryForList|queryForObject|queryForMap|update|batchUpdate)",
           "arg": "1"
         }
       ],

@@ -373,12 +373,14 @@ class CodeIndex:
         p = self.parsed(rel)
         if p is None:
             return []
+        lines = p.source.decode("utf-8", errors="replace").split("\n")
         out = []
         for n in walk(p.root):
             if n.type in p.spec.calls:
                 callee = call_name(p, n)
                 if callee:
-                    out.append(CallSite(callee, rel, n.start_point[0] + 1, "", ""))
+                    line = n.start_point[0]
+                    out.append(CallSite(callee, rel, line + 1, "", lines[line].strip()[:200]))
         return out
 
     def search(self, pattern: str, limit: int = 30) -> list[tuple[str, int, str]]:
