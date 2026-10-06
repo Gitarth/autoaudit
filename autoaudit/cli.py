@@ -16,6 +16,7 @@ autoaudit command line.
     autoaudit opengrep  run Opengrep / Semgrep CE with autoaudit's own rules -> SARIF
     autoaudit variants  LLM generalises confirmed findings into new rules (rescan to find siblings)
     autoaudit alerts-diff  alerts in a new run that an old run did not report
+    autoaudit confirm   (experimental) LLM-written harness tries to trigger an alert in a sandbox
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -407,6 +408,31 @@ def cmd_alerts_diff(a):
     )
 
 
+def cmd_confirm(a):
+    from . import confirm
+
+    found = _read_alerts(a.alerts)
+    if a.ids:
+        found = [x for x in found if any(x.id.startswith(i) for i in a.ids)]
+    if a.triage:
+        records = evaluate.read_triage(a.triage)
+        found = [x for x in found if records.get(x.id, {}).get("verdict") in ("true_positive", "uncertain")]
+    found = found[: a.limit]
+    provider = _provider(a)
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    counts: Counter = Counter()
+    with open(a.out, "a", encoding="utf-8") as fh:
+        for x in found:
+            root = a.src or projects.source_root(a.data_dir / "repos" / x.project)
+            res = confirm.confirm(
+                x, root, provider, a.data_dir / "confirm" / x.id, a.sandbox, a.image, a.timeout
+            )
+            counts[res.status] += 1
+            fh.write(json.dumps(res.__dict__) + "\n")
+            logging.info("%s %s:%s -> %s", x.rule_id, x.path, x.line, res.status)
+    print(json.dumps({"alerts": len(found), **counts, "out": str(a.out)}, indent=2))
+
+
 def cmd_stats(a):
     fields = ["project", "total", *sorted(ANALYSIS_VALUES), "Unaudited"]
     w = csv.DictWriter(sys.stdout, fieldnames=fields, restval=0, extrasaction="ignore")
@@ -663,6 +689,24 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--out", type=Path, required=True)
     s.set_defaults(func=cmd_alerts_diff)
 
+    s = sub.add_parser("confirm", help="(experimental) try to trigger alerts in a sandbox")
+    s.add_argument("--alerts", type=Path, nargs="+", default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--ids", nargs="*", help="alert ids (prefixes) to confirm")
+    s.add_argument("--triage", type=Path, help="only alerts triaged true_positive or uncertain")
+    s.add_argument("--src", type=Path, help="source root (default: <data-dir>/repos/<project>)")
+    s.add_argument("--limit", type=int, default=10)
+    s.add_argument(
+        "--sandbox",
+        choices=["auto", "container", "local"],
+        default="auto",
+        help="'local' runs generated code on this machine: only for code you trust",
+    )
+    s.add_argument("--image", help="container image (default per language)")
+    s.add_argument("--timeout", type=int, default=120, help="seconds per harness run")
+    s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/confirm.jsonl")
+    _add_llm_args(s)
+    s.set_defaults(func=cmd_confirm)
+
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
     s.add_argument("--fpr-glob", default="target/fortify/*.fpr")
@@ -706,8 +750,13 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "dataset"
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
-    if a.cmd in ("context", "triage", "eval", "prune", "diagnose", "sweep", "variants") and a.alerts is None:
+    if (
+        a.cmd in ("context", "triage", "eval", "prune", "diagnose", "sweep", "variants", "confirm")
+        and a.alerts is None
+    ):
         a.alerts = [a.data_dir / "alerts.jsonl"]
+    if a.cmd == "confirm" and a.out is None:
+        a.out = a.data_dir / "confirm.jsonl"
     if a.cmd == "sweep" and a.out is None:
         a.out = a.data_dir / "sweep.jsonl"
     if a.cmd in ("triage", "prune") and a.out is None:

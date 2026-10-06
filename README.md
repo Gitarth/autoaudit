@@ -106,6 +106,29 @@ reads, constant ifs, constant switches). These checks were designed while studyi
 false positives, so expect smaller gains on real code; the remaining false
 positives (sanitizers, parameterized queries) are left to LLM triage.
 
+## Finding more real vulnerabilities (recall)
+
+| Command | What it does |
+|---|---|
+| `autoaudit diagnose --src SRC --owasp expected.csv` (or `--truth path,cwe,real CSV`) | Ranks calls typical of **missed** real vulnerabilities that no rule covers: rule gaps, with example lines. |
+| `autoaudit infer-spec --src SRC --base specs/java.json --evidence diagnose.json --out spec.json` | LLM writes rules for this codebase, guided by the diagnose report; merged into the base so coverage only grows. |
+| `autoaudit summarize-libs data/sarif --out sem.tsv` then `autoaudit joern --semantics sem.tsv` | LLM classifies library calls on flows; hashes/lengths/parses stop taint (Joern semantics), class-specific sanitizers go into the spec. Sources and sinks are never suppressed. |
+| `autoaudit sweep data/sarif --src SRC` | Dangerous calls no flow reaches, kept only if an argument syntactically derives from user input (`lighttaint`); alerts carry approximate flows, so `prune` applies. |
+| `autoaudit opengrep --src SRC` + `autoaudit alerts data/sarif --src SRC` | Runs Opengrep/Semgrep CE with autoaudit's own rules (no telemetry) and merges with Joern: duplicates combined, agreement in `also_reported_by`, flows attached to flow-less alerts. `eval --min-tools 2` scores corroborated alerts. |
+| `autoaudit variants --triage triage.jsonl --out spec2.json` + `autoaudit alerts-diff old new` | LLM generalises confirmed findings into new rules; rescan and diff to list sibling vulnerabilities. |
+| `autoaudit confirm --triage triage.jsonl` (experimental) | LLM writes a harness that drives the real code with a payload; it runs in a locked-down container and an oracle it cannot fake decides (canary file, planted secret, reflected payload). |
+
+OWASP Benchmark (Java, after AST pruning, no LLM):
+
+| Setup | TPR | FPR | Precision |
+|---|---|---|---|
+| Joern | 0.933 | 0.113 | 0.902 |
+| Joern + sweep | 1.000 | 0.357 | 0.757 |
+| Joern + Semgrep CE (union) | 0.986 | 0.245 | 0.817 |
+| Joern + Semgrep CE (both agree) | 0.745 | 0.098 | 0.894 |
+
+The sweep and the union are high-recall modes meant to feed LLM triage.
+
 ## Evaluation
 
 ```bash
