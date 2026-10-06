@@ -14,6 +14,8 @@ autoaudit command line.
     autoaudit summarize-libs  LLM flow summaries for library calls on flows (Joern semantics)
     autoaudit sweep     dangerous calls no flow reaches, minus provably harmless ones -> alerts
     autoaudit opengrep  run Opengrep / Semgrep CE with autoaudit's own rules -> SARIF
+    autoaudit variants  LLM generalises confirmed findings into new rules (rescan to find siblings)
+    autoaudit alerts-diff  alerts in a new run that an old run did not report
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -362,6 +364,49 @@ def cmd_sweep(a):
     print(json.dumps({**stats, "out": str(a.out)}, indent=2))
 
 
+def cmd_variants(a):
+    from . import variants
+
+    found = _read_alerts(a.alerts)
+    records = evaluate.read_triage(a.triage) if a.triage else None
+    labels = evaluate.read_labels(a.labels) if a.labels else None
+    if records is None and labels is None:
+        sys.exit("give --triage and/or --labels to say which alerts are confirmed")
+    sure = variants.confirmed(found, records, labels)
+    roots = {x.project: a.src or projects.source_root(a.data_dir / "repos" / x.project) for x in sure}
+    spec, additions, usage = variants.propose(
+        sure, roots, joern.load_spec(a.spec), _provider(a), limit=a.limit
+    )
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    a.out.write_text(json.dumps(spec, indent=2))
+    a.out.with_suffix(".additions.json").write_text(json.dumps(additions, indent=2))
+    print(
+        json.dumps(
+            {
+                "confirmed": len(sure),
+                "rules_added_or_extended": len(additions["rules"]),
+                "spec": str(a.out),
+                "next": f"autoaudit joern --spec {a.out} ... then alerts-diff",
+                "usage": usage.__dict__,
+                "cost_usd": usage.cost(a.price_in, a.price_out),
+            },
+            indent=2,
+        )
+    )
+
+
+def cmd_alerts_diff(a):
+    from . import variants
+
+    new = variants.diff(alerts.read_jsonl(a.old), alerts.read_jsonl(a.new))
+    alerts.write_jsonl(new, a.out)
+    print(
+        json.dumps(
+            {"new_alerts": len(new), "out": str(a.out), "by_rule": Counter(x.rule_id for x in new)}, indent=2
+        )
+    )
+
+
 def cmd_stats(a):
     fields = ["project", "total", *sorted(ANALYSIS_VALUES), "Unaudited"]
     w = csv.DictWriter(sys.stdout, fieldnames=fields, restval=0, extrasaction="ignore")
@@ -601,6 +646,23 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_sweep)
 
+    s = sub.add_parser("variants", help="generalise confirmed findings into new rules")
+    s.add_argument("--alerts", type=Path, nargs="+", default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument("--triage", type=Path, help="triage results; true_positive verdicts count as confirmed")
+    s.add_argument("--labels", type=Path, help="CSV alert_id,label of confirmed findings")
+    s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC, help="spec to extend")
+    s.add_argument("--src", type=Path, help="source root (default: <data-dir>/repos/<project>)")
+    s.add_argument("--out", type=Path, required=True, help="extended spec to write")
+    s.add_argument("--limit", type=int, default=12, help="confirmed findings to show the model")
+    _add_llm_args(s)
+    s.set_defaults(func=cmd_variants)
+
+    s = sub.add_parser("alerts-diff", help="alerts in NEW that OLD did not report (e.g. variants)")
+    s.add_argument("old", type=Path)
+    s.add_argument("new", type=Path)
+    s.add_argument("--out", type=Path, required=True)
+    s.set_defaults(func=cmd_alerts_diff)
+
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
     s.add_argument("--fpr-glob", default="target/fortify/*.fpr")
@@ -644,7 +706,7 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "dataset"
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
-    if a.cmd in ("context", "triage", "eval", "prune", "diagnose", "sweep") and a.alerts is None:
+    if a.cmd in ("context", "triage", "eval", "prune", "diagnose", "sweep", "variants") and a.alerts is None:
         a.alerts = [a.data_dir / "alerts.jsonl"]
     if a.cmd == "sweep" and a.out is None:
         a.out = a.data_dir / "sweep.jsonl"
