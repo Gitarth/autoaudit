@@ -1,0 +1,85 @@
+# autoaudit's own Opengrep/Semgrep taint rules (Java web), mirroring specs/java.json.
+# Written for this project, so they can be used commercially (unlike the Semgrep
+# registry rules). Run with: autoaudit opengrep --src <dir>
+rules:
+  - id: autoaudit-java-sqli
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data reaches a SQL statement.
+    metadata: {cwe: ["CWE-89: SQL Injection"], category: security}
+    pattern-sources: &sources
+      - patterns:
+          - pattern: $REQ.$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $X.$EXEC($Q, ...)
+          - metavariable-regex:
+              metavariable: $EXEC
+              regex: ^(executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|query|queryForRowSet|queryForList|queryForObject|queryForMap|update|batchUpdate)$
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern: $E.encodeForSQL(...)
+
+  - id: autoaudit-java-cmdi
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data reaches an OS command.
+    metadata: {cwe: ["CWE-78: OS Command Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $R.exec(...)
+          - pattern: new ProcessBuilder(...)
+          - pattern: new java.lang.ProcessBuilder(...)
+          - pattern: $PB.command(...)
+
+  - id: autoaudit-java-path-traversal
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data selects a file path.
+    metadata: {cwe: ["CWE-22: Path Traversal"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: new java.io.File(...)
+          - pattern: new File(...)
+          - pattern: new java.io.FileInputStream(...)
+          - pattern: new FileInputStream(...)
+          - pattern: new java.io.FileOutputStream(...)
+          - pattern: new FileOutputStream(...)
+          - pattern: new java.io.FileReader(...)
+          - pattern: new java.io.FileWriter(...)
+          - pattern: new java.io.RandomAccessFile(...)
+          - pattern: java.nio.file.Paths.get(...)
+          - pattern: Paths.get(...)
+    pattern-sanitizers:
+      - pattern: (java.io.File $F).getName()
+      - pattern: $P.normalize()
+
+  - id: autoaudit-java-xss
+    mode: taint
+    languages: [java]
+    severity: WARNING
+    message: User-controlled data is written to the HTTP response.
+    metadata: {cwe: ["CWE-79: Cross-site Scripting"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern: $RESP.getWriter().$W(...)
+          - metavariable-regex:
+              metavariable: $W
+              regex: ^(print|println|write|append|format|printf)$
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $E.encodeForHTML(...)
+          - pattern: $E.encodeForJavaScript(...)
+          - pattern: $E.escapeHtml(...)
+          - pattern: $E.escapeHtml4(...)
+          - pattern: $E.htmlEscape(...)

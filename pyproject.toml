@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoaudit"
+version = "2.0.0"
+description = "Build labeled vulnerability datasets from audited Fortify (FPR) scans of GitHub Java projects."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Hitarth Patel" }]
+dependencies = [
+    "lxml>=5.2",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+# AST features (prune, agent triage). Grammar wheels bundle compiled parsers: no runtime downloads.
+ast = [
+    "tree-sitter>=0.23",
+    "tree-sitter-java>=0.23",
+    "tree-sitter-python>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-php>=0.23",
+    "tree-sitter-c-sharp>=0.23",
+]
+dev = ["pytest>=8", "ruff>=0.5", "autoaudit[ast]"]
+
+[project.scripts]
+autoaudit = "autoaudit.cli:main"
+
+[tool.setuptools]
+packages = ["autoaudit", "autoaudit.joern"]
+
+[tool.setuptools.package-data]
+autoaudit = ["specs/*.json", "rules/*.yml"]
+"autoaudit.joern" = ["*.sc"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/conftest.py" = ["E501"]  # inline FVDL/XML fixtures
