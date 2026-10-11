@@ -1,0 +1,60 @@
+{
+  "description": "Five Java projects, each checked out at the commit just before a public security fix. Ground truth is derived from the fix commit (see autoaudit/bench.py). Cases whose CWE no bundled rule targets measure rule gaps (feed them to diagnose / infer-spec).",
+  "cases": [
+    {
+      "name": "halo",
+      "repo": "https://github.com/halo-dev/halo",
+      "fix": "c0de760fd060b141d11e26bba30dcf364fc292b0",
+      "id": "CVE-2026-55439",
+      "cwe": "CWE-22",
+      "license": "GPL-3.0",
+      "summary": "Backup download resolves a user-influenced filename under the backups root without checkDirectoryTraversal (MigrationServiceImpl.download)."
+    },
+    {
+      "name": "kkFileView",
+      "repo": "https://github.com/kekingcn/kkFileView",
+      "fix": "b65a04857cebab2692d14ab7cdb318c2f67ee537",
+      "id": "kkFileView-b65a048",
+      "cwe": "CWE-22",
+      "license": "Apache-2.0",
+      "summary": "The file name taken from a remote preview URL may contain ../ and is used to build the local download path (WebUtils / OnlinePreviewController.onlinePreview)."
+    },
+    {
+      "name": "jeecg-boot",
+      "repo": "https://github.com/jeecgboot/jeecg-boot",
+      "fix": "0fc374de4745eac52620eeb8caf6a7b76127529a",
+      "id": "CVE-2022-47105",
+      "cwe": "CWE-89",
+      "license": "Apache-2.0",
+      "summary": "SQL injection through /sys/dict/queryTableData: the keyword blacklist in SqlInjectionUtil missed geohash/gtid_* and multi-line comments. The query is built by MyBatis ${} in SysDictMapper.xml; the Java-side sink is the mapper call.",
+      "locations": [
+        {
+          "path": "jeecg-module-system/jeecg-system-biz/src/main/java/org/jeecg/modules/system/controller/SysDictController.java",
+          "lines": [356]
+        },
+        {
+          "path": "jeecg-module-system/jeecg-system-biz/src/main/java/org/jeecg/modules/system/service/impl/SysDictServiceImpl.java",
+          "lines": [392]
+        }
+      ]
+    },
+    {
+      "name": "spring-cloud-function",
+      "repo": "https://github.com/spring-cloud/spring-cloud-function",
+      "fix": "0e89ee27b2e76138c16bcba6f4bca906c4f3744f",
+      "id": "CVE-2022-22963",
+      "cwe": "CWE-917",
+      "license": "Apache-2.0",
+      "summary": "The spring.cloud.function.routing-expression message header is parsed and evaluated as SpEL in a StandardEvaluationContext (RoutingFunction.functionFromExpression)."
+    },
+    {
+      "name": "javamelody",
+      "repo": "https://github.com/javamelody/javamelody",
+      "fix": "ef111822562d0b9365bd3e671a75b65bd0613353",
+      "id": "CVE-2018-15531",
+      "cwe": "CWE-611",
+      "license": "Apache-2.0",
+      "summary": "XXE: the SOAP request body is parsed by an XMLInputFactory with DTDs and external entities enabled (PayloadNameRequestWrapper.parseSoapMethodName)."
+    }
+  ]
+}

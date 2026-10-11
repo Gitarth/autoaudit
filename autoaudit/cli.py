@@ -17,6 +17,7 @@ autoaudit command line.
     autoaudit variants  LLM generalises confirmed findings into new rules (rescan to find siblings)
     autoaudit alerts-diff  alerts in a new run that an old run did not report
     autoaudit confirm   (experimental) LLM-written harness tries to trigger an alert in a sandbox
+    autoaudit bench     known-vulnerable commits of real projects: fetch, scan, score detection
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
     autoaudit build     audited FPRs -> labeled dataset
@@ -32,11 +33,26 @@ import csv
 import json
 import logging
 import os
+import shutil
 import sys
 from collections import Counter
 from pathlib import Path
 
-from . import alerts, c2v, crawl, dataset, evaluate, joern, llm, metrics, projects, scan, specgen, triage
+from . import (
+    alerts,
+    bench,
+    c2v,
+    crawl,
+    dataset,
+    evaluate,
+    joern,
+    llm,
+    metrics,
+    projects,
+    scan,
+    specgen,
+    triage,
+)
 from .context import build_context
 from .fpr import ANALYSIS_VALUES, FPR
 
@@ -235,18 +251,22 @@ def cmd_triage(a):
 
 
 def cmd_prune(a):
+    found = _read_alerts(a.alerts)
+    pruned = _prune(found, lambda p: a.src or projects.source_root(a.data_dir / "repos" / p), a.out)
+    print(json.dumps({"alerts": len(found), "pruned": pruned, "out": str(a.out)}, indent=2))
+
+
+def _prune(found: list, root_of, out: Path) -> int:
+    """Append a false_positive verdict to `out` for every provably infeasible alert."""
     from . import codeindex, feasibility
 
-    found = _read_alerts(a.alerts)
     indexes: dict[str, codeindex.CodeIndex] = {}
-    a.out.parent.mkdir(parents=True, exist_ok=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
     pruned = 0
-    with open(a.out, "a", encoding="utf-8") as fh:
+    with open(out, "a", encoding="utf-8") as fh:
         for x in found:
             if x.project not in indexes:
-                indexes[x.project] = codeindex.CodeIndex(
-                    a.src or projects.source_root(a.data_dir / "repos" / x.project)
-                )
+                indexes[x.project] = codeindex.CodeIndex(root_of(x.project))
             dead = feasibility.infeasible(x, indexes[x.project])
             if dead is None:
                 continue
@@ -256,7 +276,7 @@ def cmd_prune(a):
             )
             rec.update(verdict="false_positive", confidence=1.0, reason=dead.reason)
             fh.write(json.dumps(rec) + "\n")
-    print(json.dumps({"alerts": len(found), "pruned": pruned, "out": str(a.out)}, indent=2))
+    return pruned
 
 
 def cmd_infer_spec(a):
@@ -462,6 +482,74 @@ def cmd_metrics(a):
         metrics.run_ck(a.ck_jar, _projects(a.data_dir), out)
     loc = metrics.total_loc(out)
     print(json.dumps({"projects": len(loc), "total_loc": sum(loc.values())}, indent=2))
+
+
+def cmd_bench(a):
+    root = a.data_dir / "bench"
+    cases = bench.load_corpus(a.corpus)
+    if a.only:
+        cases = [c for c in cases if c.name in set(a.only)]
+    if a.stage in ("fetch", "all"):
+        truth = bench.fetch(cases, root, a.timeout)
+        ok = sum(1 for t in truth.values() if "error" not in t)
+        print(f"{ok}/{len(truth)} cases checked out under {root / 'repos'}; truth in {root / 'truth.json'}")
+    truth_path = root / "truth.json"
+    if not truth_path.exists():
+        sys.exit(f"no {truth_path}: run `autoaudit bench fetch` first")
+    names = {c.name for c in cases}
+    truth = {n: t for n, t in json.loads(truth_path.read_text()).items() if n in names}
+    if a.stage in ("scan", "all"):
+        _bench_scan(a, root, [n for n, t in truth.items() if "error" not in t])
+    if a.stage in ("score", "all"):
+        found = _read_alerts(a.alerts or [root / "alerts.jsonl"])
+        triage_path = a.triage or root / "triage.jsonl"
+        results = evaluate.read_triage(triage_path) if triage_path.exists() else None
+        report = bench.score(truth, found, results, a.keep_uncertain, a.tolerance, a.any_cwe)
+        (root / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        table = bench.markdown(report)
+        (root / "report.md").write_text(table, encoding="utf-8")
+        print(table + f"\nDetails: {root / 'report.json'}")
+
+
+def _bench_scan(a, root: Path, names: list[str]) -> None:
+    from . import codeindex, ensemble
+
+    opengrep = shutil.which("opengrep") or shutil.which("semgrep")
+    scanners = a.scanners or [
+        s for s, ok in (("joern", joern.available(a.bin_dir)), ("opengrep", bool(opengrep))) if ok
+    ]
+    if not scanners:
+        sys.exit("no scanner found: install Joern and/or Opengrep (or Semgrep CE), or pass --scanners")
+    spec = joern.load_spec(a.spec)
+    sarif = root / "sarif"
+    for name in names:
+        src = root / "repos" / name
+        for tool in scanners:
+            try:
+                if tool == "joern":
+                    out = sarif / f"{name}.sarif"
+                    joern.scan(src, spec, out, root / "cpg", a.bin_dir, None, a.timeout, a.max_flows)
+                else:
+                    out = sarif / f"{name}.opengrep.sarif"
+                    ensemble.run_opengrep(src, out, None, None, a.timeout)
+                logging.info("%s: %s done", name, tool)
+            except Exception as err:  # one project or tool failing must not stop the batch
+                logging.error("%s: %s failed: %s", name, tool, str(err).splitlines()[0] if str(err) else err)
+
+    found = []
+    for p in sorted(sarif.glob("*.sarif")) if sarif.exists() else []:
+        project = p.name.split(".")[0]
+        if project in names:
+            found += alerts.read_sarif(p, project=project)
+    found = ensemble.merge(found)
+    if codeindex.available():  # flows for flow-less alerts, so `flow` matching and prune work on them
+        indexes = {n: codeindex.CodeIndex(root / "repos" / n) for n in names}
+        ensemble.attach_flows(found, spec, indexes)
+    alerts.write_jsonl(found, root / "alerts.jsonl")
+    pruned = 0
+    if a.prune and codeindex.available():
+        pruned = _prune(found, lambda p: root / "repos" / p, root / "triage.jsonl")
+    print(f"{len(found)} alerts ({', '.join(scanners)}) -> {root / 'alerts.jsonl'}; {pruned} pruned")
 
 
 def cmd_c2v(a):
@@ -706,6 +794,40 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/confirm.jsonl")
     _add_llm_args(s)
     s.set_defaults(func=cmd_confirm)
+
+    s = sub.add_parser(
+        "bench", help="fetch known-vulnerable commits of real projects, scan them, score detection"
+    )
+    s.add_argument(
+        "stage",
+        nargs="?",
+        default="all",
+        choices=["fetch", "scan", "score", "all"],
+        help="fetch: checkout + ground truth; scan: analyzers -> alerts, prune; score: report (default: all)",
+    )
+    s.add_argument("--corpus", type=Path, default=bench.DEFAULT_CORPUS, help="cases JSON")
+    s.add_argument("--only", nargs="*", help="only these case names")
+    s.add_argument(
+        "--scanners", nargs="+", choices=["joern", "opengrep"], help="default: every installed one"
+    )
+    s.add_argument("--spec", type=Path, default=joern.DEFAULT_SPEC, help="taint rule spec (JSON)")
+    s.add_argument("--bin-dir", type=Path, help="directory with joern and joern-parse (env: JOERN_HOME)")
+    s.add_argument("--max-flows", type=int, default=200, help="cap on reported flows per rule per project")
+    s.add_argument("--timeout", type=int, default=None, help="seconds per git fetch / scanner step")
+    s.add_argument("--no-prune", dest="prune", action="store_false", help="skip the AST feasibility check")
+    s.add_argument(
+        "--alerts", type=Path, nargs="+", help="score these (default: <data-dir>/bench/alerts.jsonl)"
+    )
+    s.add_argument("--triage", type=Path, help="verdicts (default: <data-dir>/bench/triage.jsonl if present)")
+    s.add_argument(
+        "--drop-uncertain",
+        dest="keep_uncertain",
+        action="store_false",
+        help="treat 'uncertain' verdicts as dismissed (default: kept)",
+    )
+    s.add_argument("--tolerance", type=int, default=3, help="lines between a sink and a truth line")
+    s.add_argument("--any-cwe", action="store_true", help="count hits by alerts of any CWE")
+    s.set_defaults(func=cmd_bench)
 
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')

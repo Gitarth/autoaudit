@@ -145,6 +145,43 @@ synthetic and GPL-2.0 licensed, so do not ship it.
 SPDX licenses; without it every repository is downloaded and its license is
 recorded.
 
+### Real-project benchmark (known CVEs)
+
+```bash
+autoaudit bench                  # fetch -> scan -> score, everything under data/bench/
+autoaudit bench fetch            # or one stage at a time: fetch, scan, score
+autoaudit bench scan --scanners joern opengrep --bin-dir ~/joern-cli
+autoaudit --data-dir data/bench triage --limit 50 && autoaudit bench score   # with LLM verdicts
+```
+
+`fetch` clones each project in `autoaudit/corpus/java-cves.json` with git at
+the commit just before its security fix (shallow, pinned SHAs) and derives the
+ground truth from the fix itself: the code lines it changed in the vulnerable
+version (for a pure insertion, the code on either side), the functions holding
+them, and optional hand-written `locations` when the fix sits away from the
+flow (jeecg-boot patches a blacklist; the sink is the mapper call). Test files,
+imports, blank lines and braces are ignored. `scan` runs every installed
+analyzer (Joern, Opengrep/Semgrep CE), merges the alerts and prunes the
+infeasible ones. `score` writes `report.md` / `report.json`: per case, whether
+an alert of the case's CWE hit it at three strictnesses (sink line within
+`--tolerance` lines, sink inside a fixed function, or any step of the reported
+path inside one), how many alerts the project produced, and the same after
+triage when `data/bench/triage.jsonl` exists.
+
+| case | CVE | CWE | fix |
+|---|---|---|---|
+| halo | CVE-2026-55439 | 22 path traversal | `c0de760` |
+| kkFileView | (no CVE) | 22 path traversal | `b65a048` |
+| jeecg-boot | CVE-2022-47105 | 89 SQL injection | `0fc374d` |
+| spring-cloud-function | CVE-2022-22963 | 917 SpEL injection | `0e89ee2` |
+| javamelody | CVE-2018-15531 | 611 XXE | `ef11182` |
+
+The last two are CWEs no bundled rule targets yet: they measure rule gaps
+(`diagnose`, `infer-spec`). Add cases by appending `{name, repo, fix, cwe}`
+(and optionally `id`, `vulnerable`, `locations`) to the corpus or pass your
+own with `--corpus`. The code is fetched for analysis only; check each
+project's license before redistributing it.
+
 ## Fortify dataset pipeline
 
 All artifacts go under `--data-dir` (default `./data`, or `AUTOAUDIT_DATA_DIR`).
