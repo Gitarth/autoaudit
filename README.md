@@ -195,6 +195,25 @@ code. Train on audits of your own codebases (or the Fortify FPR dataset this
 project started from) before trusting a model on a new one, and treat a model
 trained here as a demonstration of the pipeline, not a product.
 
+### Training on audited Fortify FPRs
+
+```bash
+autoaudit fpr-import path/to/fprs/        # -> data/fortify_alerts.jsonl, data/fortify_labels.csv, data/fortify-src/
+autoaudit ml-dataset --alerts data/fortify_alerts.jsonl --labels data/fortify_labels.csv \
+    --src-dir data/fortify-src --group project --only-labeled --out data/fortify-ml.jsonl.gz
+autoaudit ml-train --dataset data/fortify-ml.jsonl.gz --model gbdt --cv random grouped cwe --out models/fortify-gbdt
+autoaudit ml-train --dataset data/fortify-ml.jsonl.gz --model hybrid --cv grouped --out models/fortify-hybrid
+```
+
+Each audited finding becomes an alert whose flow is Fortify's primary trace,
+with the sources it touches extracted from the FPR's `src-archive`. Verdicts
+`Suspicious` and `Exploitable` are real, `Not an Issue` false (change with
+`--positive` / `--negative`); findings with the same rule, source and sink but
+opposite verdicts lose their label. Group by project: the grouped score is the
+one to expect on a codebase the model has not seen. A model trained on Fortify
+alerts has learned Fortify's flows; scoring Joern or Semgrep alerts with it is a
+distribution shift, so check it with `eval` on labeled alerts first.
+
 ## Evaluation
 
 ```bash

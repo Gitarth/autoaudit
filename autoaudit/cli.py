@@ -17,6 +17,7 @@ autoaudit command line.
     autoaudit variants  LLM generalises confirmed findings into new rules (rescan to find siblings)
     autoaudit alerts-diff  alerts in a new run that an old run did not report
     autoaudit confirm   (experimental) LLM-written harness tries to trigger an alert in a sandbox
+    autoaudit fpr-import  audited Fortify FPRs -> alerts + sources + labels for learned triage
     autoaudit ml-dataset  alerts -> features + code graphs + labels for learned triage (JSONL)
     autoaudit ml-train  cross-validate and train GBDT / Devign-style GGNN triage models
     autoaudit ml-predict  score alerts with a trained model -> triage verdicts
@@ -321,7 +322,25 @@ def cmd_eval(a):
 
 
 def _root_of(a):
-    return lambda p: a.src or projects.source_root(a.data_dir / "repos" / p)
+    if a.src:
+        return lambda p: a.src
+    if getattr(a, "src_dir", None):
+        return lambda p: a.src_dir / p
+    return lambda p: projects.source_root(a.data_dir / "repos" / p)
+
+
+def cmd_fpr_import(a):
+    from . import fortify
+
+    summary = fortify.import_fprs(
+        dataset.find_fprs(a.fprs),
+        a.src_dir or a.data_dir / "fortify-src",
+        a.out or a.data_dir / "fortify_alerts.jsonl",
+        a.labels_out or a.data_dir / "fortify_labels.csv",
+        a.positive,
+        a.negative,
+    )
+    print(json.dumps(summary, indent=2))
 
 
 def cmd_ml_dataset(a):
@@ -856,11 +875,25 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_eval)
 
+    s = sub.add_parser("fpr-import", help="audited Fortify FPRs -> alerts, sources and labels for ml-dataset")
+    s.add_argument("fprs", type=Path, help="an .fpr file or a directory of them")
+    s.add_argument(
+        "--src-dir", type=Path, help="sources go to <src-dir>/<project> (default: <data-dir>/fortify-src)"
+    )
+    s.add_argument("--out", type=Path, help="alerts (default: <data-dir>/fortify_alerts.jsonl)")
+    s.add_argument("--labels-out", type=Path, help="labels CSV (default: <data-dir>/fortify_labels.csv)")
+    s.add_argument(
+        "--positive", nargs="+", default=["Suspicious", "Exploitable"], help="verdicts labeled real"
+    )
+    s.add_argument("--negative", nargs="+", default=["Not an Issue"], help="verdicts labeled false")
+    s.set_defaults(func=cmd_fpr_import)
+
     s = sub.add_parser("ml-dataset", help="features + code graphs + labels per alert (learned triage)")
     s.add_argument("--alerts", type=Path, nargs="+", default=None, help="default: <data-dir>/alerts.jsonl")
     s.add_argument(
         "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
     )
+    s.add_argument("--src-dir", type=Path, help="one source tree per project: <src-dir>/<project>")
     s.add_argument("--owasp", type=Path, help="labels from OWASP Benchmark expectedresults-*.csv")
     s.add_argument("--labels", type=Path, help="hand labels CSV: alert_id,label (wins over other sources)")
     s.add_argument("--triage", type=Path, help="labels from earlier LLM triage verdicts (uncertain ignored)")
@@ -906,6 +939,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
     )
+    s.add_argument("--src-dir", type=Path, help="one source tree per project: <src-dir>/<project>")
     s.add_argument("--threshold", type=float, help="override the model's threshold")
     s.add_argument(
         "--overwrite",

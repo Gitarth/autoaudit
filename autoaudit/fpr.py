@@ -46,6 +46,8 @@ class Finding:
     function_line: int | None
     analysis: str | None = None
     source_sha: str | None = None
+    # (path, line) of each node of the primary trace, source first; not part of the dataset rows
+    trace: list = field(default_factory=list, repr=False, compare=False)
 
     @property
     def category(self) -> str:
@@ -53,6 +55,7 @@ class Finding:
 
     def to_dict(self) -> dict:
         d = asdict(self)
+        d.pop("trace")
         d["category"] = self.category
         return d
 
@@ -209,6 +212,23 @@ def _primary_location(vuln, node_pool: dict[str, etree._Element]):
     return vuln.find(".//{*}SourceLocation")
 
 
+def _trace(vuln, node_pool: dict[str, etree._Element]) -> list[tuple[str, int | None]]:
+    """Locations of the first trace's nodes in order (taint source first, sink last)."""
+    out = []
+    trace = vuln.find(".//{*}Trace")
+    for entry in trace.iterfind(".//{*}Entry") if trace is not None else []:
+        node = entry.find("{*}Node")
+        if node is None:
+            ref = entry.find("{*}NodeRef")
+            node = node_pool.get(ref.get("id")) if ref is not None else None
+        loc = node.find("{*}SourceLocation") if node is not None else None
+        if loc is not None and loc.get("path"):
+            step = (loc.get("path"), _int(loc.get("line")))
+            if not out or out[-1] != step:
+                out.append(step)
+    return out
+
+
 def _parse_findings(fvdl, project: str) -> Iterator[Finding]:
     pool = {n.get("id"): n for n in fvdl.iterfind(".//{*}UnifiedNodePool/{*}Node")}
     for vuln in fvdl.iter("{*}Vulnerability"):
@@ -230,6 +250,7 @@ def _parse_findings(fvdl, project: str) -> Iterator[Finding]:
             line=_int(loc.get("line")) if loc is not None else None,
             function=func.get("name") if func is not None else None,
             function_line=_int(func_loc.get("line")) if func_loc is not None else None,
+            trace=_trace(vuln, pool),
         )
 
 

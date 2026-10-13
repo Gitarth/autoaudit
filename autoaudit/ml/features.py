@@ -93,6 +93,7 @@ def features(alert: Alert, index: CodeIndex, prune: bool = True) -> dict[str, fl
     f["has_flow"] = int(bool(flows))
     f["n_tools"] = 1 + len({r.split(":")[0] for r in alert.also_reported_by} - {alert.tool})
     f[f"tool={alert.tool}"] = 1
+    f[f"rule={alert.rule_id}"] = 1
     for cwe in alert.cwes:
         f[f"cwe={cwe}"] = 1
 
