@@ -17,6 +17,9 @@ autoaudit command line.
     autoaudit variants  LLM generalises confirmed findings into new rules (rescan to find siblings)
     autoaudit alerts-diff  alerts in a new run that an old run did not report
     autoaudit confirm   (experimental) LLM-written harness tries to trigger an alert in a sandbox
+    autoaudit ml-dataset  alerts -> features + code graphs + labels for learned triage (JSONL)
+    autoaudit ml-train  cross-validate and train GBDT / Devign-style GGNN triage models
+    autoaudit ml-predict  score alerts with a trained model -> triage verdicts
     autoaudit bench     known-vulnerable commits of real projects: fetch, scan, score detection
     autoaudit scan      run Fortify on each Maven project, collect FPRs
     autoaudit stats     per-FPR finding counts by audit verdict
@@ -315,6 +318,146 @@ def cmd_eval(a):
     if not report:
         sys.exit("give --owasp and/or --labels")
     print(json.dumps(report, indent=2))
+
+
+def _root_of(a):
+    return lambda p: a.src or projects.source_root(a.data_dir / "repos" / p)
+
+
+def cmd_ml_dataset(a):
+    from .ml import data
+
+    found = _read_alerts(a.alerts)
+    labels: dict[str, tuple[bool, str]] = {}
+    if a.triage:
+        # never learn from deterministic pruning or from a model's own predictions
+        recs = {
+            k: r
+            for k, r in evaluate.read_triage(a.triage).items()
+            if r.get("provider") not in ("ast", "model")
+        }
+        labels.update({k: (v, "triage") for k, v in data.labels_from_triage(recs).items()})
+    if a.owasp:
+        expected = evaluate.read_owasp_expected(a.owasp)
+        labels.update({k: (v, "owasp") for k, v in evaluate.label_owasp_alerts(found, expected).items()})
+    if a.labels:
+        labels.update({k: (v, "hand") for k, v in evaluate.read_labels(a.labels).items()})
+    recs = data.build(
+        found, _root_of(a), labels, graph=not a.no_graph, group=a.group, only_labeled=a.only_labeled
+    )
+    data.write(recs, a.out)
+    lab = [r["label"] for r in recs if r["label"] is not None]
+    print(
+        json.dumps(
+            {
+                "examples": len(recs),
+                "labeled": len(lab),
+                "real": sum(lab),
+                "groups": len({r["group"] for r in recs}),
+                "with_graph": sum(1 for r in recs if r.get("graph")),
+                "out": str(a.out),
+            },
+            indent=2,
+        )
+    )
+
+
+def _model_kwargs(a) -> dict:
+    return {"epochs": a.epochs, "hidden": a.hidden, "steps": a.steps}
+
+
+def cmd_ml_train(a):
+    from .ml import data, models
+
+    recs = [r for r in data.read(a.dataset) if r["label"] is not None]
+    if a.model != "gbdt":
+        recs = [r for r in recs if r.get("graph")]
+    if len({r["label"] for r in recs}) < 2:
+        sys.exit("need labeled examples of both classes")
+    y = [int(r["label"]) for r in recs]
+    report: dict = {
+        "model": a.model,
+        "examples": len(recs),
+        "real": sum(y),
+        "groups": len({r["group"] for r in recs}),
+    }
+    threshold, oof_grouped = None, None
+    for split in a.cv:
+        oof = models.cross_validate(recs, a.model, split, a.folds, a.seed, **_model_kwargs(a))
+        t = models.threshold_for_recall(oof, y, a.target_recall)
+        report[f"cv_{split}"] = models.metrics(oof, y, t)
+        if split == "grouped" or threshold is None:
+            threshold, oof_grouped = t, oof
+    if threshold is None:
+        threshold = 0.5
+    if a.oof_out and oof_grouped is not None:
+        _write_model_triage(recs, oof_grouped, threshold, f"{a.model}-oof", a.oof_out)
+        report["oof_out"] = str(a.oof_out)
+    if a.out:
+        model = models.make(a.model, seed=a.seed, **_model_kwargs(a)).fit(recs, y)
+        meta = {
+            "threshold": threshold,
+            "target_recall": a.target_recall,
+            "trained_on": str(a.dataset),
+            "examples": len(recs),
+            "cv": {k: v for k, v in report.items() if k.startswith("cv_")},
+        }
+        models.save(model, a.out, meta)
+        report["out"] = str(a.out)
+    report["threshold"] = round(threshold, 4)
+    print(json.dumps(report, indent=2))
+
+
+def _write_model_triage(recs: list[dict], probs: list[float], threshold: float, name: str, out: Path) -> int:
+    from .ml.models import MODEL_VERSION
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "a", encoding="utf-8") as fh:
+        for r, p in zip(recs, probs):
+            real = p >= threshold
+            fh.write(
+                json.dumps(
+                    {
+                        "key": f"model:{name}:{r['alert_id']}",
+                        "alert_id": r["alert_id"],
+                        "project": r["project"],
+                        "rule_id": r["rule_id"],
+                        "cwes": r["cwes"],
+                        "path": r["path"],
+                        "line": r["line"],
+                        "provider": "model",
+                        "model": name,
+                        "prompt_version": MODEL_VERSION,
+                        "verdict": "true_positive" if real else "false_positive",
+                        "confidence": round(p if real else 1 - p, 4),
+                        "reason": f"learned triage {name}: P(real) = {p:.3f}, threshold {threshold:.3f}",
+                    }
+                )
+                + "\n"
+            )
+    return len(recs)
+
+
+def cmd_ml_predict(a):
+    from .ml import data, models
+
+    model, meta = models.load(a.model)
+    found = _read_alerts(a.alerts)
+    done = evaluate.read_triage(a.out) if a.out.exists() and not a.overwrite else {}
+    found = [x for x in found if x.id not in done]
+    recs = data.build(found, _root_of(a), {}, graph=meta["kind"] != "gbdt")
+    if meta["kind"] != "gbdt":
+        recs = [r for r in recs if r.get("graph")]
+    threshold = a.threshold if a.threshold is not None else meta["threshold"]
+    probs = model.predict(recs) if recs else []
+    _write_model_triage(recs, probs, threshold, a.model.name, a.out)
+    dismissed = sum(p < threshold for p in probs)
+    print(
+        json.dumps(
+            {"scored": len(recs), "already_triaged": len(done), "dismissed": dismissed, "out": str(a.out)},
+            indent=2,
+        )
+    )
 
 
 def cmd_diagnose(a):
@@ -713,6 +856,65 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_eval)
 
+    s = sub.add_parser("ml-dataset", help="features + code graphs + labels per alert (learned triage)")
+    s.add_argument("--alerts", type=Path, nargs="+", default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
+    )
+    s.add_argument("--owasp", type=Path, help="labels from OWASP Benchmark expectedresults-*.csv")
+    s.add_argument("--labels", type=Path, help="hand labels CSV: alert_id,label (wins over other sources)")
+    s.add_argument("--triage", type=Path, help="labels from earlier LLM triage verdicts (uncertain ignored)")
+    s.add_argument(
+        "--group",
+        choices=["slice", "file", "project", "cwe"],
+        default="slice",
+        help="grouping for leakage-safe CV: abstracted slice (default), file, project or CWE",
+    )
+    s.add_argument("--only-labeled", action="store_true")
+    s.add_argument("--no-graph", action="store_true", help="features only (enough for gbdt)")
+    s.add_argument("--out", type=Path, required=True, help="dataset JSONL (.gz to compress)")
+    s.set_defaults(func=cmd_ml_dataset)
+
+    s = sub.add_parser("ml-train", help="cross-validate and train a triage model (needs [ml] extra)")
+    s.add_argument("--dataset", type=Path, required=True)
+    s.add_argument("--model", choices=["gbdt", "ggnn", "hybrid"], default="gbdt")
+    s.add_argument(
+        "--cv",
+        nargs="*",
+        choices=["random", "grouped", "cwe"],
+        default=["random", "grouped"],
+        help="cross-validation schemes to report (the threshold comes from 'grouped')",
+    )
+    s.add_argument("--folds", type=int, default=5)
+    s.add_argument(
+        "--target-recall",
+        type=float,
+        default=0.98,
+        help="share of real findings the decision threshold must keep (default 0.98)",
+    )
+    s.add_argument("--oof-out", type=Path, help="write out-of-fold verdicts (triage JSONL) for `eval`")
+    s.add_argument("--out", type=Path, help="model directory; omit to only cross-validate")
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--epochs", type=int, default=30, help="GGNN: max epochs (early stopping)")
+    s.add_argument("--hidden", type=int, default=64, help="GGNN: hidden size")
+    s.add_argument("--steps", type=int, default=4, help="GGNN: message-passing steps")
+    s.set_defaults(func=cmd_ml_train)
+
+    s = sub.add_parser("ml-predict", help="score alerts with a trained model -> triage verdicts")
+    s.add_argument("--model", type=Path, required=True, help="model directory from ml-train --out")
+    s.add_argument("--alerts", type=Path, nargs="+", default=None, help="default: <data-dir>/alerts.jsonl")
+    s.add_argument(
+        "--src", type=Path, help="source root for all alerts (default: <data-dir>/repos/<project>)"
+    )
+    s.add_argument("--threshold", type=float, help="override the model's threshold")
+    s.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="also score alerts that already have a verdict in --out (default: keep prune/LLM verdicts)",
+    )
+    s.add_argument("--out", type=Path, default=None, help="default: <data-dir>/triage.jsonl")
+    s.set_defaults(func=cmd_ml_predict)
+
     s = sub.add_parser("diagnose", help="find rule gaps from missed real vulnerabilities")
     s.add_argument("--src", type=Path, required=True, help="source root the alerts refer to")
     s.add_argument(
@@ -873,7 +1075,19 @@ def main(argv=None) -> int:
     if a.cmd == "alerts" and a.out is None:
         a.out = a.data_dir / "alerts.jsonl"
     if (
-        a.cmd in ("context", "triage", "eval", "prune", "diagnose", "sweep", "variants", "confirm")
+        a.cmd
+        in (
+            "context",
+            "triage",
+            "eval",
+            "prune",
+            "diagnose",
+            "sweep",
+            "variants",
+            "confirm",
+            "ml-dataset",
+            "ml-predict",
+        )
         and a.alerts is None
     ):
         a.alerts = [a.data_dir / "alerts.jsonl"]
@@ -881,7 +1095,7 @@ def main(argv=None) -> int:
         a.out = a.data_dir / "confirm.jsonl"
     if a.cmd == "sweep" and a.out is None:
         a.out = a.data_dir / "sweep.jsonl"
-    if a.cmd in ("triage", "prune") and a.out is None:
+    if a.cmd in ("triage", "prune", "ml-predict") and a.out is None:
         a.out = a.data_dir / "triage.jsonl"
     a.func(a)
     return 0

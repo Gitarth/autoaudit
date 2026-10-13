@@ -171,7 +171,7 @@ def _run(cmd: list[str], timeout: int | None, cwd: Path | None = None) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     for line in proc.stdout.splitlines():
         if line.startswith("[autoaudit]"):
-            log.info(line)
+            (log.warning if "WARNING" in line else log.info)(line)
     if proc.returncode:
         out = (proc.stderr or "") + "\n" + (proc.stdout or "")
         # report the exception messages, not the JVM stack frames

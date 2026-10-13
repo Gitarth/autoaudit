@@ -120,6 +120,7 @@ def loadSemantics(path: String): List[FlowSemantic] =
     // "every path is dead".
     type Key = (String, Option[Int], String, Option[Int])
     val groups = scala.collection.mutable.LinkedHashMap.empty[Key, scala.collection.mutable.LinkedHashMap[List[(String, Option[Int])], String]]
+    val dropped = scala.collection.mutable.Set.empty[Key]
     if (sources.nonEmpty && sinks.nonEmpty) {
       for (path <- sinks.reachableByFlows(sources)) {
         val els = path.elements
@@ -139,7 +140,7 @@ def loadSemantics(path: String): List[FlowSemantic] =
               if (paths.size == 1)
                 els.flatMap(calleeOf).distinct.filter(external).foreach(fn => externals(fn) += 1)
             }
-          }
+          } else dropped += key
         }
       }
     }
@@ -147,6 +148,8 @@ def loadSemantics(path: String): List[FlowSemantic] =
       out.println(s"""{"rule":${str(rule)},"flows":[${paths.values.mkString(",")}]}""")
     val written = groups.size
     println(s"[autoaudit] rule $rule: ${sources.size} sources, ${sinks.size} sinks, $written flows")
+    if (dropped.nonEmpty)
+      println(s"[autoaudit] WARNING rule $rule: ${dropped.size} more source-sink pairs dropped by maxFlows=$maxFlows; raise --max-flows")
   }
   out.close()
   sinkOut.foreach(_.close())

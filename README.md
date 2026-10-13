@@ -118,16 +118,80 @@ positives (sanitizers, parameterized queries) are left to LLM triage.
 | `autoaudit variants --triage triage.jsonl --out spec2.json` + `autoaudit alerts-diff old new` | LLM generalises confirmed findings into new rules; rescan and diff to list sibling vulnerabilities. |
 | `autoaudit confirm --triage triage.jsonl` (experimental) | LLM writes a harness that drives the real code with a payload; it runs in a locked-down container and an oracle it cannot fake decides (canary file, planted secret, reflected payload). |
 
-OWASP Benchmark (Java, after AST pruning, no LLM):
+OWASP Benchmark (Java, 6 classes: SQLi, command, path traversal, XSS, LDAP,
+XPath; after AST pruning, no LLM):
 
 | Setup | TPR | FPR | Precision |
 |---|---|---|---|
-| Joern | 0.933 | 0.113 | 0.902 |
-| Joern + sweep | 1.000 | 0.357 | 0.757 |
-| Joern + Semgrep CE (union) | 0.986 | 0.245 | 0.817 |
-| Joern + Semgrep CE (both agree) | 0.745 | 0.098 | 0.894 |
+| Joern | 0.937 | 0.118 | 0.896 |
+| Joern + Semgrep CE (union) | 0.987 | 0.244 | 0.815 |
+| Joern + Semgrep CE (both agree) | 0.752 | 0.101 | 0.890 |
+| Joern + sweep (first 4 classes) | 1.000 | 0.357 | 0.757 |
 
-The sweep and the union are high-recall modes meant to feed LLM triage.
+LDAP (CWE-90) and XPath (CWE-643) alone: TPR 1.00 at FPR 0.16 and 0.25. The
+sweep and the union are high-recall modes meant to feed triage (LLM or learned).
+
+The bundled spec also covers expression-language injection (SpEL, OGNL, MVEL,
+Jakarta EL; CWE-917) and XXE (CWE-611), which Benchmark does not test. For
+those two the pruner reads configuration as a reviewer would: a parser whose
+factory disallows DOCTYPEs or external entities, or SpEL evaluated only with a
+`SimpleEvaluationContext`, is reported as mitigated (`autoaudit/hardening.py`).
+
+`--max-flows` (default 200 source-sink pairs per rule) protects large repos;
+Joern logs a warning when it drops pairs. Benchmark needs `--max-flows 100000`.
+
+## Learned triage (GBDT and a Devign-style graph network)
+
+Instead of (or before) an LLM, a model trained on audited alerts can score new
+ones. Needs `pip install -e ".[ml]"` (scikit-learn and PyTorch; CPU is enough).
+
+```bash
+autoaudit ml-dataset --src SRC --labels audit.csv --out data/ml.jsonl.gz    # or --owasp / --triage
+autoaudit ml-train --dataset data/ml.jsonl.gz --model hybrid --cv random grouped cwe --out models/hybrid
+autoaudit ml-predict --model models/hybrid --src SRC        # verdicts -> data/triage.jsonl
+autoaudit eval --owasp expected.csv --triage data/triage.jsonl
+```
+
+- Each alert becomes hand-made features (path shape, conversions, sanitiser,
+  collection and string calls on the path, guards around the sink, tool
+  agreement, AST pruner result, call names) and a **code graph** in the style
+  of Devign: the AST of every function on the reported path with statement
+  order, token order, def-use, call and the analyzer's own source-to-sink
+  edges. Names and literals are abstracted and node types mapped to kinds
+  shared by all tree-sitter grammars, so one model can span languages.
+- Models: `gbdt` (gradient-boosted trees on the features), `ggnn` (gated graph
+  network on the graph alone), `hybrid` (the GGNN with the features joined
+  before its classifier).
+- The decision threshold keeps a target share of real findings (default 98%)
+  on out-of-fold predictions; dismissing a real vulnerability costs more than
+  reviewing a false one.
+- Cross-validation is reported three ways: `random` (optimistic), `grouped`
+  (near-identical findings, by abstracted slice, file or project, never
+  straddle train and test) and `cwe` (leave one vulnerability class out).
+- `ml-predict` keeps existing prune and LLM verdicts unless `--overwrite`, and
+  `ml-dataset --triage` never learns from pruning or model verdicts.
+- Labels: hand labels (`alert_id,label`), OWASP Benchmark expected results, or
+  earlier LLM verdicts (weak labels, e.g. to distil an expensive model into a
+  cheap one).
+
+OWASP Benchmark, Joern + Semgrep union (1,372 labeled alerts, 819 real), out-of-fold:
+
+| Model | CV | AUC | False alerts removed at 98% of real kept |
+|---|---|---|---|
+| gbdt | random | 0.973 | 83% |
+| gbdt | grouped | 0.970 | 81% |
+| gbdt | leave one class out | 0.951 | 79% |
+| ggnn | grouped | 0.936 | 56% |
+| hybrid | grouped | 0.991 | 92% |
+Scorecard with the grouped out-of-fold verdicts as triage (`ml-train --oof-out`):
+AST pruning alone TPR 0.987 / FPR 0.244; gbdt 0.967 / 0.134; hybrid
+0.973 / 0.062 (precision 0.944).
+
+These are Benchmark numbers: one synthetic suite of templated servlets, so
+even grouped folds share templates and the models will look worse on real
+code. Train on audits of your own codebases (or the Fortify FPR dataset this
+project started from) before trusting a model on a new one, and treat a model
+trained here as a demonstration of the pipeline, not a product.
 
 ## Evaluation
 
@@ -252,4 +316,5 @@ Fixes to the original scripts that affect the data:
 pytest
 ruff check . && ruff format --check .
 AUTOAUDIT_TEST_JOERN_HOME=/path/to/joern pytest   # also run the real-Joern integration test
+pip install -e ".[ml]" && pytest tests/test_ml.py   # model tests skip without scikit-learn / torch
 ```

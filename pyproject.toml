@@ -26,13 +26,15 @@ ast = [
     "tree-sitter-php>=0.23",
     "tree-sitter-c-sharp>=0.23",
 ]
+# learned triage (ml-train / ml-predict); CPU-only PyTorch is enough
+ml = ["scikit-learn>=1.3", "numpy>=1.24", "torch>=2.1", "autoaudit[ast]"]
 dev = ["pytest>=8", "ruff>=0.5", "autoaudit[ast]"]
 
 [project.scripts]
 autoaudit = "autoaudit.cli:main"
 
 [tool.setuptools]
-packages = ["autoaudit", "autoaudit.joern"]
+packages = ["autoaudit", "autoaudit.joern", "autoaudit.ml"]
 
 [tool.setuptools.package-data]
 autoaudit = ["specs/*.json", "rules/*.yml", "corpus/*.json"]
