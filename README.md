@@ -183,6 +183,8 @@ OWASP Benchmark, Joern + Semgrep union (1,372 labeled alerts, 819 real), out-of-
 | gbdt | leave one class out | 0.951 | 79% |
 | ggnn | grouped | 0.936 | 56% |
 | hybrid | grouped | 0.991 | 92% |
+| hybrid | leave one class out | 0.990 | 78% |
+
 Scorecard with the grouped out-of-fold verdicts as triage (`ml-train --oof-out`):
 AST pruning alone TPR 0.987 / FPR 0.244; gbdt 0.967 / 0.134; hybrid
 0.973 / 0.062 (precision 0.944).
