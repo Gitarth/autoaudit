@@ -116,6 +116,166 @@
           "pattern": ".*(encodeForHTML|encodeForJavaScript|escapeHtml.*|htmlEscape|escapeXml.*|sanitize).*"
         }
       ]
+    },
+    {
+      "id": "spel-injection",
+      "name": "Expression language injection (SpEL / OGNL / MVEL / Jakarta EL)",
+      "cwe": "CWE-917",
+      "severity": "error",
+      "sources": [
+        {
+          "kind": "call",
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
+        },
+        {
+          "kind": "annotated_param",
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
+        }
+      ],
+      "sinks": [
+        {
+          "pattern": "org\\.springframework\\.expression\\..*\\.(parseExpression|parseRaw):.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "(parseExpression|parseRaw)",
+          "arg": "1"
+        },
+        {
+          "pattern": "ognl\\.Ognl\\.(getValue|setValue|parseExpression):.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "org\\.mvel2\\.MVEL\\.(eval|compileExpression|executeExpression):.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "(jakarta|javax)\\.el\\.ELProcessor\\.(eval|getValue|setValue):.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "(jakarta|javax)\\.el\\.ExpressionFactory\\.(createValueExpression|createMethodExpression):.*",
+          "arg": "2"
+        }
+      ],
+      "sanitizers": []
+    },
+    {
+      "id": "xxe",
+      "name": "XML external entity (XXE) processing of untrusted XML",
+      "cwe": "CWE-611",
+      "severity": "error",
+      "sources": [
+        {
+          "kind": "call",
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
+        },
+        {
+          "kind": "annotated_param",
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
+        }
+      ],
+      "sinks": [
+        {
+          "pattern": "javax\\.xml\\.parsers\\.(DocumentBuilder|SAXParser)\\.parse:.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "org\\.xml\\.sax\\.XMLReader\\.parse:.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "javax\\.xml\\.stream\\.XMLInputFactory\\.(createXMLStreamReader|createXMLEventReader):.*",
+          "arg": "*"
+        },
+        {
+          "pattern": "javax\\.xml\\.bind\\.Unmarshaller\\.unmarshal:.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "jakarta\\.xml\\.bind\\.Unmarshaller\\.unmarshal:.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "javax\\.xml\\.transform\\.Transformer\\.transform:.*",
+          "arg": "1"
+        },
+        {
+          "pattern": "javax\\.xml\\.validation\\.Validator\\.validate:.*",
+          "arg": "1"
+        },
+        {
+          "pattern": ".*(DocumentBuilder|SAXParser|XMLReader|SAXBuilder|SAXReader)\\.(parse|build|read):.*",
+          "arg": "1"
+        }
+      ],
+      "sanitizers": []
+    },
+    {
+      "id": "ldap-injection",
+      "name": "LDAP injection",
+      "cwe": "CWE-90",
+      "severity": "error",
+      "sources": [
+        {
+          "kind": "call",
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
+        },
+        {
+          "kind": "annotated_param",
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
+        }
+      ],
+      "sinks": [
+        {
+          "pattern": "javax\\.naming\\.directory\\.(DirContext|InitialDirContext)\\.search:.*",
+          "arg": "*"
+        },
+        {
+          "pattern": "javax\\.naming\\.ldap\\.(LdapContext|InitialLdapContext)\\.search:.*",
+          "arg": "*"
+        },
+        {
+          "pattern": ".*\\.(LdapTemplate|LdapOperations)\\.(search|searchForObject|authenticate):.*",
+          "arg": "*"
+        }
+      ],
+      "sanitizers": [
+        {
+          "pattern": ".*(encodeForLDAP|encodeForDN|escapeLDAPSearchFilter|escapeDN).*"
+        }
+      ]
+    },
+    {
+      "id": "xpath-injection",
+      "name": "XPath injection",
+      "cwe": "CWE-643",
+      "severity": "error",
+      "sources": [
+        {
+          "kind": "call",
+          "pattern": "(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)"
+        },
+        {
+          "kind": "annotated_param",
+          "pattern": "(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|QueryParam|PathParam|FormParam|HeaderParam)"
+        }
+      ],
+      "sinks": [
+        {
+          "pattern": "javax\\.xml\\.xpath\\.XPath\\.(evaluate|compile|evaluateExpression):.*",
+          "arg": "1"
+        },
+        {
+          "pattern": ".*\\.(selectNodes|selectSingleNode):.*",
+          "arg": "1"
+        }
+      ],
+      "sanitizers": [
+        {
+          "pattern": ".*(encodeForXPath|escapeXPath).*"
+        }
+      ]
     }
   ]
 }

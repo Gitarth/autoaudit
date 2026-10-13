@@ -407,7 +407,14 @@ def infeasible(alert: Alert, index: CodeIndex) -> DeadCode | None:
     """Evidence that the alert can never happen: EVERY reported path passes through
     provably dead code. (One dead path is not enough: the analyzer may list a dead
     path while a live one exists, e.g. two switch cases assigning the same value.)
-    Returns the dead step of the first path, or None if any path may be feasible."""
+    Returns the dead step of the first path, or None if any path may be feasible.
+    Also reports sinks neutralised by configuration (hardened XML parsers, SpEL with a
+    SimpleEvaluationContext); see hardening.py."""
+    from .hardening import mitigated
+
+    why = mitigated(alert, index)
+    if why:
+        return DeadCode(None, alert.path, alert.line, f"line {alert.line}: {why}")
     cache: dict = {}
     first = None
     for steps in alert.flows or [[]]:
