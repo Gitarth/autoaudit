@@ -114,15 +114,28 @@ def merge(alerts: list[Alert]) -> list[Alert]:
     return out
 
 
-def attach_flows(alerts: list[Alert], spec: dict, indexes: dict[str, CodeIndex]) -> int:
-    """Give flow-less alerts approximate chains from lighttaint; returns how many got one."""
+def attach_flows(
+    alerts: list[Alert], spec: dict, indexes: dict[str, CodeIndex], max_files: int = 5000
+) -> int:
+    """Give flow-less alerts approximate chains from lighttaint; returns how many got one.
+    lighttaint is a whole-repository fixpoint per rule, so projects with more than
+    `max_files` source files are skipped (their alerts keep no flow)."""
+    from .codeindex import lang_of
     from .lighttaint import LightTaint
 
     rule_for_cwe = {r.get("cwe"): r["id"] for r in spec["rules"] if r.get("cwe")}
+    languages = set(spec.get("languages") or ["java"])  # a spec's sources only exist in its language
     engines: dict[tuple[str, str | None], LightTaint] = {}
+    too_big: set[str] = set()
     done = 0
     for a in alerts:
-        if a.flow or a.project not in indexes or not a.line:
+        if a.flow or a.project not in indexes or not a.line or lang_of(a.path) not in languages:
+            continue
+        if a.project in too_big:
+            continue
+        if len(indexes[a.project].files()) > max_files:
+            log.warning("%s: more than %d source files, no approximate flows", a.project, max_files)
+            too_big.add(a.project)
             continue
         rule = next((rule_for_cwe[c] for c in a.cwes if c in rule_for_cwe), None)
         key = (a.project, rule)

@@ -391,6 +391,8 @@ def cmd_ml_train(a):
     from .ml import data, models
 
     recs = [r for r in data.read(a.dataset) if r["label"] is not None]
+    if a.label_sources:
+        recs = [r for r in recs if r.get("label_source") in set(a.label_sources)]
     if a.model != "gbdt":
         recs = [r for r in recs if r.get("graph")]
     if len({r["label"] for r in recs}) < 2:
@@ -673,9 +675,13 @@ def cmd_bench(a):
             except Exception as err:  # one repository must not stop the rest
                 logging.error("%s: fixed checkout failed: %s", n, str(err).splitlines()[0])
     if a.stage in ("scan", "all") or (a.stage == "label" and not (root / "alerts.jsonl").exists()):
-        _bench_scan(a, root, ok_names, languages)
+        # alerts are collected for every checked-out case, so --only rescans a few
+        # cases (or one scanner) without dropping the others' alerts
+        everything = [n for n, t in json.loads(truth_path.read_text()).items() if "error" not in t]
+        _bench_scan(a, root, ok_names, languages, collect=everything)
         if fixed:
-            _bench_scan(a, root, [n for n in ok_names if (root / "fixed" / n).exists()], languages, "fixed")
+            done = [n for n in everything if (root / "fixed" / n).exists()]
+            _bench_scan(a, root, [n for n in done if n in ok_names], languages, "fixed", collect=done)
     if a.stage in ("score", "all"):
         found = _read_alerts(a.alerts or [root / "alerts.jsonl"])
         triage_path = a.triage or root / "triage.jsonl"
@@ -730,8 +736,15 @@ def _bench_label(a, root: Path, truth: dict) -> None:
 
 
 def _bench_scan(
-    a, root: Path, names: list[str], languages: dict | None = None, version: str = "vulnerable"
+    a,
+    root: Path,
+    names: list[str],
+    languages: dict | None = None,
+    version: str = "vulnerable",
+    collect: list[str] | None = None,
 ) -> None:
+    """Scan `names`, then rebuild the alert file from the SARIF of every case in
+    `collect` (default: `names`)."""
     from . import codeindex, ensemble
 
     src_root, sarif, out = (
@@ -752,6 +765,9 @@ def _bench_scan(
         for tool in scanners:
             if tool == "joern" and languages.get(name) not in (None, "java"):
                 continue  # the bundled Joern spec is Java's; Opengrep covers the other languages
+            target = sarif / (f"{name}.sarif" if tool == "joern" else f"{name}.opengrep.sarif")
+            if getattr(a, "reuse", False) and target.exists():
+                continue
             try:
                 if tool == "joern":
                     out_sarif = sarif / f"{name}.sarif"
@@ -769,18 +785,20 @@ def _bench_scan(
                     str(err).splitlines()[0] if str(err) else err,
                 )
 
+    collect = set(collect or names)
     found = []
     for p in sorted(sarif.glob("*.sarif")) if sarif.exists() else []:
         project = p.name.split(".")[0]
-        if project in names:
+        if project in collect:
             found += alerts.read_sarif(p, project=project)
     found = ensemble.merge(found)
     if codeindex.available():  # flows for flow-less alerts, so `flow` matching and prune work on them
-        indexes = {n: codeindex.CodeIndex(src_root / n) for n in names}
+        indexes = {n: codeindex.CodeIndex(src_root / n) for n in sorted(collect)}
         ensemble.attach_flows(found, spec, indexes)
     alerts.write_jsonl(found, out)
     pruned = 0
     if version == "vulnerable" and a.prune and codeindex.available():
+        (root / "triage.jsonl").unlink(missing_ok=True)  # prune verdicts for exactly these alerts
         pruned = _prune(found, lambda p: src_root / p, root / "triage.jsonl")
     print(f"{len(found)} alerts ({', '.join(scanners)}, {version}) -> {out}; {pruned} pruned")
 
@@ -991,6 +1009,11 @@ def parser() -> argparse.ArgumentParser:
     )
     s.add_argument("--folds", type=int, default=5)
     s.add_argument(
+        "--label-sources",
+        nargs="+",
+        help="train only on these label sources (e.g. hand owasp fix persists triage)",
+    )
+    s.add_argument(
         "--target-recall",
         type=float,
         default=0.98,
@@ -1118,6 +1141,7 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also check out and scan each fix commit (needed by `label`; implied by it)",
     )
+    s.add_argument("--reuse", action="store_true", help="scan: keep SARIF already written for a case")
     s.add_argument(
         "--no-weak-negatives",
         dest="weak_negatives",

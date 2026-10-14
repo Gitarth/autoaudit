@@ -1,5 +1,8 @@
 {
   "description": "Baseline Java web taint rules. All rules share one servlet/JAX-RS/Spring source list. A starting point only: per-codebase specs (e.g. LLM-inferred) should extend or replace these.",
+  "languages": [
+    "java"
+  ],
   "rules": [
     {
       "id": "sqli",

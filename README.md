@@ -195,6 +195,52 @@ code. Train on audits of your own codebases (or the Fortify FPR dataset this
 project started from) before trusting a model on a new one, and treat a model
 trained here as a demonstration of the pipeline, not a product.
 
+### A multi-language training corpus from real security fixes
+
+`autoaudit/corpus/training.json` lists 48 open-source projects in Java,
+Python, JavaScript, TypeScript, Go, PHP and C#. Each one is pinned to the
+commit just before a public security fix (GitHub Security Advisories / OSV),
+covering SQL, command and code injection, path traversal, XSS, XXE, SSRF,
+expression injection and deserialization. Every fix commit was fetched and
+checked against its advisory. The file stores references only; code is
+fetched at build time under each project's own license.
+
+```bash
+autoaudit bench label --corpus autoaudit/corpus/training.json --timeout 1800   # fetch both versions, scan, label
+autoaudit ml-dataset --alerts data/bench/alerts.jsonl --labels data/bench/labels.csv \
+    --src-dir data/bench/repos --group project --only-labeled --out data/corpus-ml.jsonl.gz
+autoaudit ml-train --dataset data/corpus-ml.jsonl.gz --model gbdt --cv grouped cwe
+```
+
+Labels come from scanning each project before and after its fix (as in D2A,
+Zheng et al. 2021):
+
+- **real** (`fix`): the alert reaches the code the fix changed, at the
+  advisory's CWE, and is gone after the fix;
+- **false** (`persists`, weak): the alert is away from the fix and is still
+  reported after it with the same sink and source code. Most of these are
+  false positives, but some may be real bugs nobody fixed; `ml-train
+  --label-sources fix owasp hand` leaves them out, `bench label
+  --no-weak-negatives` never writes them;
+- everything else stays unlabeled. A case is labeled only when the same
+  scanners produced results for both versions.
+
+Rules for the non-Java languages are Opengrep/Semgrep taint rules
+(`autoaudit/rules/*-taint.yml`); Joern runs on the Java cases. Semgrep CE does
+not report taint traces, so Semgrep-only alerts carry the sink and its
+function, not a path.
+
+First build (Semgrep CE on all 48 cases): 8,443 alerts on the vulnerable
+versions, yet only 5 cases had an alert of the advisory's CWE on the fixed
+code (7 with any CWE), giving 4 real labels and 8,420 weak negatives (7,522
+of them from one PHP project). Most of these real vulnerabilities cross
+functions or files, or start from sources the rules do not model (settings,
+library parameters, stored data), which intraprocedural Semgrep CE misses. So
+as built, the corpus is a realistic **evaluation** set and a source of
+realistic false positives; training positives need either many more cases
+(OSV lists thousands of fix commits) or candidate alerts that do not depend on
+taint reaching the sink (every dangerous call, as `sweep` does).
+
 ### Training on audited Fortify FPRs
 
 ```bash
