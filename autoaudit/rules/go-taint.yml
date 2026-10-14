@@ -1,0 +1,187 @@
+# autoaudit's own Opengrep/Semgrep taint rules for Go web code (net/http, gin,
+# echo, fiber, chi, gorilla/mux). Written for this project.
+rules:
+  - id: autoaudit-go-sqli
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: User-controlled data reaches a SQL statement.
+    metadata: {cwe: ["CWE-89: SQL Injection"], category: security}
+    pattern-sources: &sources
+      - patterns:
+          - pattern-either:
+              - pattern: $R.URL.Query()
+              - pattern: $R.URL.RawQuery
+              - pattern: $R.URL.Path
+              - pattern: $R.FormValue(...)
+              - pattern: $R.PostFormValue(...)
+              - pattern: $R.Form
+              - pattern: $R.PostForm
+              - pattern: $R.MultipartForm
+              - pattern: $R.Header
+              - pattern: $R.Cookie(...)
+              - pattern: $R.Cookies()
+              - pattern: $R.Body
+              - pattern: $R.PathValue(...)
+              - pattern: $R.Referer()
+              - pattern: $R.UserAgent()
+              - pattern: json.NewDecoder($R.Body)
+          - metavariable-regex:
+              metavariable: $R
+              regex: ^(r|req|request|httpReq|hr)$
+      - patterns:
+          - pattern-either:
+              - pattern: $C.Param(...)
+              - pattern: $C.Query(...)
+              - pattern: $C.DefaultQuery(...)
+              - pattern: $C.PostForm(...)
+              - pattern: $C.DefaultPostForm(...)
+              - pattern: $C.GetHeader(...)
+              - pattern: $C.GetRawData()
+              - pattern: $C.Cookie(...)
+              - pattern: $C.ShouldBind(...)
+              - pattern: $C.ShouldBindJSON(...)
+              - pattern: $C.BindJSON(...)
+              - pattern: $C.QueryParam(...)
+              - pattern: $C.QueryParams()
+              - pattern: $C.FormParams()
+              - pattern: $C.Params(...)
+              - pattern: $C.FormValue(...)
+              - pattern: $C.Body()
+              - pattern: $C.BodyParser(...)
+          - metavariable-regex:
+              metavariable: $C
+              regex: ^(c|ctx|context|gc|e)$
+      - pattern: mux.Vars(...)
+      - pattern: chi.URLParam(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.QueryRow($Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.QueryContext($CTX, $Q, ...)
+              - pattern: $DB.QueryRowContext($CTX, $Q, ...)
+              - pattern: $DB.ExecContext($CTX, $Q, ...)
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.Select($D, $Q, ...)
+              - pattern: $DB.Get($D, $Q, ...)
+              - pattern: $DB.Raw($Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.Where($Q, ...)
+              - pattern: $DB.Order($Q)
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+          - pattern: strconv.ParseUint(...)
+          - pattern: strconv.ParseBool(...)
+          - pattern: uuid.Parse(...)
+
+  - id: autoaudit-go-cmdi
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: User-controlled data reaches an OS command or its arguments.
+    metadata: {cwe: ["CWE-78: OS Command Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: exec.Command(...)
+          - pattern: exec.CommandContext(...)
+          - pattern: syscall.Exec(...)
+          - pattern: syscall.ForkExec(...)
+          - pattern: os.StartProcess(...)
+
+  - id: autoaudit-go-path-traversal
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: User-controlled data selects a file path.
+    metadata: {cwe: ["CWE-22: Path Traversal"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: os.Open($P)
+              - pattern: os.OpenFile($P, ...)
+              - pattern: os.ReadFile($P)
+              - pattern: ioutil.ReadFile($P)
+              - pattern: os.WriteFile($P, ...)
+              - pattern: ioutil.WriteFile($P, ...)
+              - pattern: os.Create($P)
+              - pattern: os.Remove($P)
+              - pattern: os.RemoveAll($P)
+              - pattern: os.Rename($P, ...)
+              - pattern: os.Mkdir($P, ...)
+              - pattern: os.MkdirAll($P, ...)
+              - pattern: os.ReadDir($P)
+              - pattern: ioutil.ReadDir($P)
+              - pattern: http.ServeFile($W, $R, $P)
+              - pattern: $C.File($P)
+              - pattern: $C.SendFile($P, ...)
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: filepath.Base(...)
+          - pattern: path.Base(...)
+          - pattern: strconv.Atoi(...)
+          - pattern: filepath.Clean("/" + ...)
+
+  - id: autoaudit-go-xss
+    mode: taint
+    languages: [go]
+    severity: WARNING
+    message: User-controlled data is written into an HTML response without escaping.
+    metadata: {cwe: ["CWE-79: Cross-site Scripting"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      func $F(..., $W http.ResponseWriter, ...) { ... }
+                  - pattern-either:
+                      - pattern: $W.Write($X)
+                      - pattern: fmt.Fprintf($W, $X, ...)
+                      - pattern: fmt.Fprintf($W, $FMT, ..., $X, ...)
+                      - pattern: fmt.Fprint($W, ..., $X, ...)
+                      - pattern: fmt.Fprintln($W, ..., $X, ...)
+                      - pattern: io.WriteString($W, $X)
+              - pattern: template.HTML($X)
+              - pattern: template.JS($X)
+              - pattern: $C.Data($S, "text/html", $X)
+          - focus-metavariable: $X
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: html.EscapeString(...)
+          - pattern: template.HTMLEscapeString(...)
+          - pattern: template.JSEscapeString(...)
+          - pattern: url.QueryEscape(...)
+          - pattern: json.Marshal(...)
+          - pattern: strconv.Atoi(...)
+          - pattern: bluemonday.$P().Sanitize(...)
+          - pattern: $POLICY.Sanitize(...)
+
+  - id: autoaudit-go-ssrf
+    mode: taint
+    languages: [go]
+    severity: WARNING
+    message: User-controlled data selects the URL of a server-side request.
+    metadata: {cwe: ["CWE-918: Server-Side Request Forgery"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: http.Get($U)
+              - pattern: http.Head($U)
+              - pattern: http.Post($U, ...)
+              - pattern: http.PostForm($U, ...)
+              - pattern: http.NewRequest($M, $U, ...)
+              - pattern: http.NewRequestWithContext($CTX, $M, $U, ...)
+              - pattern: $CL.Get($U)
+              - pattern: $CL.Post($U, ...)
+              - pattern: net.Dial($N, $U)
+          - focus-metavariable: $U

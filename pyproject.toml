@@ -41,6 +41,7 @@ autoaudit = ["specs/*.json", "rules/*.yml", "corpus/*.json"]
 "autoaudit.joern" = ["*.sc"]
 
 [tool.ruff]
+extend-exclude = ["tests/fixtures"]  # deliberately vulnerable sample code for the rule tests
 line-length = 110
 target-version = "py39"
 

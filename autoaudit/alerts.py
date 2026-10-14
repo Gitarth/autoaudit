@@ -124,10 +124,15 @@ def read_sarif(path: Path, project: str | None = None, strip_prefix: str | None 
                         steps.append(Step(rel(sp), sl, sf, code))
                     if steps:
                         flows.append(steps)
+            rule_id = res.get("ruleId") or rule.get("id", "unknown")
+            if tool.lower().startswith(("semgrep", "opengrep")):
+                # Semgrep prefixes local rule ids with the config file's path
+                # (home.user.x.rules.autoaudit-js-sqli); keep the rule's own id
+                rule_id = rule_id.rsplit(".", 1)[-1]
             alerts.append(
                 Alert(
                     tool=tool,
-                    rule_id=res.get("ruleId") or rule.get("id", "unknown"),
+                    rule_id=rule_id,
                     message=res.get("message", {}).get("text", ""),
                     project=project,
                     path=rel(p),

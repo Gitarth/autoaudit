@@ -60,6 +60,8 @@ class Case:
     license: str | None = None
     summary: str | None = None
     locations: list[dict] = field(default_factory=list)
+    language: str | None = None
+    advisory: str | None = None
 
 
 @dataclass
@@ -109,6 +111,15 @@ def checkout(case: Case, dest: Path, timeout: int | None = None) -> str:
         _git("fetch", "-q", "--depth", "1", "origin", vuln, cwd=dest, timeout=timeout)
     _git("-c", "advice.detachedHead=false", "checkout", "-q", "--force", "--detach", vuln, cwd=dest)
     return vuln
+
+
+def checkout_fixed(case: Case, src: Path, dest: Path, timeout: int | None = None) -> None:
+    """Second working tree of `src` at the fix commit (fetched by `checkout`)."""
+    if (dest / ".git").exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _git("fetch", "-q", "--depth", "2", "origin", case.fix, cwd=src, timeout=timeout)
+    _git("worktree", "add", "-q", "--force", "--detach", str(dest.resolve()), case.fix, cwd=src)
 
 
 # ------------------------------------------------------------ ground truth
@@ -320,6 +331,81 @@ def score(
         summary["detected_after_triage"] = totals_triaged
         summary["alerts_after_triage"] = sum(c.get("alerts_after_triage", 0) for c in cases)
     return {"summary": summary, "cases": cases}
+
+
+# ---------------------------------------------------------------- labels
+def _line(root: Path, path: str | None, line: int | None) -> str:
+    """Whitespace-normalised source line, '' if unavailable."""
+    if not path or not line:
+        return ""
+    try:
+        text = (root / path).read_text(encoding="utf-8", errors="replace").split("\n")
+    except OSError:
+        return ""
+    return " ".join(text[line - 1].split()) if 0 < line <= len(text) else ""
+
+
+def persistence_key(a: Alert, root: Path) -> tuple:
+    """What identifies a finding across two versions of a project when line numbers
+    move: rule, sink file and code, source file and code."""
+    src = a.flow[0] if a.flow else None
+    return (
+        a.rule_id,
+        a.path,
+        _line(root, a.path, a.line),
+        src.path if src else None,
+        _line(root, src.path, src.line) if src else "",
+    )
+
+
+def label(
+    truth: dict,
+    vulnerable: list[Alert],
+    fixed: list[Alert],
+    vuln_root: Path,
+    fixed_root: Path,
+    scanned_fixed: set[str],
+    tolerance: int = 3,
+    weak_negatives: bool = True,
+) -> tuple[dict[str, tuple[bool, str]], dict]:
+    """Differential labels for the alerts on vulnerable checkouts (after D2A,
+    Zheng et al., ICSE-SEIP 2021):
+
+    - real (`fix`): reaches the fixed code (sink or flow, at the case's CWE)
+      and is gone after the fix;
+    - false (`persists`, weak): does not touch the fixed code and is still
+      reported, with the same sink and source code, after the fix. Most such
+      alerts are false positives, but some may be other, unfixed bugs;
+    - unlabeled: everything else (touches the fix but survives it, or vanishes
+      for an unrelated reason).
+
+    `vuln_root / <case>` and `fixed_root / <case>` are the two checkouts;
+    `scanned_fixed` names the cases whose fixed version was scanned (with or
+    without alerts). Cases missing from it get no labels."""
+    by_case_fixed: dict[str, set] = {name: set() for name in scanned_fixed}
+    for a in fixed:
+        if a.project in by_case_fixed:
+            by_case_fixed[a.project].add(persistence_key(a, fixed_root / a.project))
+    labels: dict[str, tuple[bool, str]] = {}
+    stats: dict[str, dict] = {}
+    for a in vulnerable:
+        t = truth.get(a.project)
+        if not t or "error" in t or a.project not in by_case_fixed:
+            continue
+        st = stats.setdefault(a.project, {"alerts": 0, "real": 0, "false": 0, "unlabeled": 0})
+        st["alerts"] += 1
+        hit = t["cwe"] in a.cwes and bool(match(a, t["locations"], tolerance))
+        touches = bool(match(a, t["locations"], tolerance))
+        persists = persistence_key(a, vuln_root / a.project) in by_case_fixed[a.project]
+        if hit and not persists:
+            labels[a.id] = (True, "fix")
+            st["real"] += 1
+        elif weak_negatives and not touches and persists:
+            labels[a.id] = (False, "persists")
+            st["false"] += 1
+        else:
+            st["unlabeled"] += 1
+    return labels, stats
 
 
 def markdown(report: dict) -> str:

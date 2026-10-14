@@ -360,7 +360,9 @@ def cmd_ml_dataset(a):
         expected = evaluate.read_owasp_expected(a.owasp)
         labels.update({k: (v, "owasp") for k, v in evaluate.label_owasp_alerts(found, expected).items()})
     if a.labels:
-        labels.update({k: (v, "hand") for k, v in evaluate.read_labels(a.labels).items()})
+        with open(a.labels, newline="", encoding="utf-8") as fh:
+            sources = {r["alert_id"]: r.get("source") or "hand" for r in csv.DictReader(fh)}
+        labels.update({k: (v, sources.get(k, "hand")) for k, v in evaluate.read_labels(a.labels).items()})
     recs = data.build(
         found, _root_of(a), labels, graph=not a.no_graph, group=a.group, only_labeled=a.only_labeled
     )
@@ -651,7 +653,8 @@ def cmd_bench(a):
     cases = bench.load_corpus(a.corpus)
     if a.only:
         cases = [c for c in cases if c.name in set(a.only)]
-    if a.stage in ("fetch", "all"):
+    fixed = a.fixed or a.stage == "label"
+    if a.stage in ("fetch", "all", "label") and (a.stage != "label" or not (root / "truth.json").exists()):
         truth = bench.fetch(cases, root, a.timeout)
         ok = sum(1 for t in truth.values() if "error" not in t)
         print(f"{ok}/{len(truth)} cases checked out under {root / 'repos'}; truth in {root / 'truth.json'}")
@@ -660,8 +663,19 @@ def cmd_bench(a):
         sys.exit(f"no {truth_path}: run `autoaudit bench fetch` first")
     names = {c.name for c in cases}
     truth = {n: t for n, t in json.loads(truth_path.read_text()).items() if n in names}
-    if a.stage in ("scan", "all"):
-        _bench_scan(a, root, [n for n, t in truth.items() if "error" not in t])
+    ok_names = [n for n, t in truth.items() if "error" not in t]
+    languages = {c.name: c.language for c in cases}
+    if fixed and a.stage in ("fetch", "all", "label"):
+        by_name = {c.name: c for c in cases}
+        for n in ok_names:
+            try:
+                bench.checkout_fixed(by_name[n], root / "repos" / n, root / "fixed" / n, a.timeout)
+            except Exception as err:  # one repository must not stop the rest
+                logging.error("%s: fixed checkout failed: %s", n, str(err).splitlines()[0])
+    if a.stage in ("scan", "all") or (a.stage == "label" and not (root / "alerts.jsonl").exists()):
+        _bench_scan(a, root, ok_names, languages)
+        if fixed:
+            _bench_scan(a, root, [n for n in ok_names if (root / "fixed" / n).exists()], languages, "fixed")
     if a.stage in ("score", "all"):
         found = _read_alerts(a.alerts or [root / "alerts.jsonl"])
         triage_path = a.triage or root / "triage.jsonl"
@@ -671,11 +685,61 @@ def cmd_bench(a):
         table = bench.markdown(report)
         (root / "report.md").write_text(table, encoding="utf-8")
         print(table + f"\nDetails: {root / 'report.json'}")
+    if a.stage == "label" or (fixed and a.stage == "all"):
+        _bench_label(a, root, truth)
 
 
-def _bench_scan(a, root: Path, names: list[str]) -> None:
+def _bench_tools(sarif: Path) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for p in sarif.glob("*.sarif") if sarif.exists() else []:
+        name, *rest = p.name.split(".")
+        out.setdefault(name, set()).add(rest[0] if len(rest) > 1 else "joern")
+    return out
+
+
+def _bench_label(a, root: Path, truth: dict) -> None:
+    vuln = _read_alerts([root / "alerts.jsonl"])
+    fixed_path = root / "alerts-fixed.jsonl"
+    if not fixed_path.exists():
+        sys.exit(f"no {fixed_path}: run `autoaudit bench scan --fixed` first")
+    fixed = _read_alerts([fixed_path])
+    tools_v, tools_f = _bench_tools(root / "sarif"), _bench_tools(root / "sarif-fixed")
+    # a case is labeled only if the same scanners ran on both versions: an alert
+    # that "disappears" because a scanner failed on the fix is not a real finding
+    scanned = {n for n in truth if tools_v.get(n) and tools_v.get(n) == tools_f.get(n)}
+    labels, stats = bench.label(
+        truth, vuln, fixed, root / "repos", root / "fixed", scanned, a.tolerance, a.weak_negatives
+    )
+    with open(root / "labels.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["alert_id", "label", "source"])
+        for aid, (lab, src) in labels.items():
+            w.writerow([aid, "true" if lab else "false", src])
+    summary = {
+        "labeled": len(labels),
+        "real": sum(1 for v, _ in labels.values() if v),
+        "false": sum(1 for v, _ in labels.values() if not v),
+        "cases_labeled": len(stats),
+        "cases_without_real": sorted(n for n, st in stats.items() if not st["real"]),
+        "cases_skipped": sorted(set(truth) - scanned),
+        "per_case": stats,
+        "out": str(root / "labels.csv"),
+    }
+    (root / "labels-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(json.dumps({k: v for k, v in summary.items() if k != "per_case"}, indent=2))
+
+
+def _bench_scan(
+    a, root: Path, names: list[str], languages: dict | None = None, version: str = "vulnerable"
+) -> None:
     from . import codeindex, ensemble
 
+    src_root, sarif, out = (
+        (root / "repos", root / "sarif", root / "alerts.jsonl")
+        if version == "vulnerable"
+        else (root / "fixed", root / "sarif-fixed", root / "alerts-fixed.jsonl")
+    )
+    languages = languages or {}
     opengrep = shutil.which("opengrep") or shutil.which("semgrep")
     scanners = a.scanners or [
         s for s, ok in (("joern", joern.available(a.bin_dir)), ("opengrep", bool(opengrep))) if ok
@@ -683,20 +747,27 @@ def _bench_scan(a, root: Path, names: list[str]) -> None:
     if not scanners:
         sys.exit("no scanner found: install Joern and/or Opengrep (or Semgrep CE), or pass --scanners")
     spec = joern.load_spec(a.spec)
-    sarif = root / "sarif"
     for name in names:
-        src = root / "repos" / name
+        src = src_root / name
         for tool in scanners:
+            if tool == "joern" and languages.get(name) not in (None, "java"):
+                continue  # the bundled Joern spec is Java's; Opengrep covers the other languages
             try:
                 if tool == "joern":
-                    out = sarif / f"{name}.sarif"
-                    joern.scan(src, spec, out, root / "cpg", a.bin_dir, None, a.timeout, a.max_flows)
+                    out_sarif = sarif / f"{name}.sarif"
+                    joern.scan(src, spec, out_sarif, root / "cpg", a.bin_dir, None, a.timeout, a.max_flows)
                 else:
-                    out = sarif / f"{name}.opengrep.sarif"
-                    ensemble.run_opengrep(src, out, None, None, a.timeout)
-                logging.info("%s: %s done", name, tool)
+                    out_sarif = sarif / f"{name}.opengrep.sarif"
+                    ensemble.run_opengrep(src, out_sarif, None, None, a.timeout)
+                logging.info("%s (%s): %s done", name, version, tool)
             except Exception as err:  # one project or tool failing must not stop the batch
-                logging.error("%s: %s failed: %s", name, tool, str(err).splitlines()[0] if str(err) else err)
+                logging.error(
+                    "%s (%s): %s failed: %s",
+                    name,
+                    version,
+                    tool,
+                    str(err).splitlines()[0] if str(err) else err,
+                )
 
     found = []
     for p in sorted(sarif.glob("*.sarif")) if sarif.exists() else []:
@@ -705,13 +776,13 @@ def _bench_scan(a, root: Path, names: list[str]) -> None:
             found += alerts.read_sarif(p, project=project)
     found = ensemble.merge(found)
     if codeindex.available():  # flows for flow-less alerts, so `flow` matching and prune work on them
-        indexes = {n: codeindex.CodeIndex(root / "repos" / n) for n in names}
+        indexes = {n: codeindex.CodeIndex(src_root / n) for n in names}
         ensemble.attach_flows(found, spec, indexes)
-    alerts.write_jsonl(found, root / "alerts.jsonl")
+    alerts.write_jsonl(found, out)
     pruned = 0
-    if a.prune and codeindex.available():
-        pruned = _prune(found, lambda p: root / "repos" / p, root / "triage.jsonl")
-    print(f"{len(found)} alerts ({', '.join(scanners)}) -> {root / 'alerts.jsonl'}; {pruned} pruned")
+    if version == "vulnerable" and a.prune and codeindex.available():
+        pruned = _prune(found, lambda p: src_root / p, root / "triage.jsonl")
+    print(f"{len(found)} alerts ({', '.join(scanners)}, {version}) -> {out}; {pruned} pruned")
 
 
 def cmd_c2v(a):
@@ -1038,8 +1109,20 @@ def parser() -> argparse.ArgumentParser:
         "stage",
         nargs="?",
         default="all",
-        choices=["fetch", "scan", "score", "all"],
-        help="fetch: checkout + ground truth; scan: analyzers -> alerts, prune; score: report (default: all)",
+        choices=["fetch", "scan", "score", "label", "all"],
+        help="fetch: checkout + ground truth; scan: analyzers -> alerts, prune; score: report; "
+        "label: training labels from scanning before and after each fix (default: all)",
+    )
+    s.add_argument(
+        "--fixed",
+        action="store_true",
+        help="also check out and scan each fix commit (needed by `label`; implied by it)",
+    )
+    s.add_argument(
+        "--no-weak-negatives",
+        dest="weak_negatives",
+        action="store_false",
+        help="label: only label real findings, not alerts that survive the fix",
     )
     s.add_argument("--corpus", type=Path, default=bench.DEFAULT_CORPUS, help="cases JSON")
     s.add_argument("--only", nargs="*", help="only these case names")
