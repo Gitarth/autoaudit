@@ -803,6 +803,34 @@ def _bench_scan(
     print(f"{len(found)} alerts ({', '.join(scanners)}, {version}) -> {out}; {pruned} pruned")
 
 
+def cmd_corpus_candidates(a):
+    from . import osv
+
+    exclude = set()
+    for corpus in a.exclude_corpus or []:
+        exclude |= {c.repo.lower() for c in bench.load_corpus(corpus)}
+    doc = osv.candidates(a.dumps, a.per_repo, exclude)
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    a.out.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    print(json.dumps({**doc["stats"], "out": str(a.out)}, indent=2))
+
+
+def cmd_corpus_mine(a):
+    from . import mine
+
+    cases = bench.load_corpus(a.corpus)
+    if a.languages:
+        cases = [c for c in cases if c.language in set(a.languages)]
+    if a.summary:
+        print(json.dumps(mine.summary(a.out), indent=2))
+        return
+    print(
+        json.dumps(
+            mine.mine(cases, a.out, a.limit, a.timeout, a.max_negatives, a.max_hours, a.workers), indent=2
+        )
+    )
+
+
 def cmd_c2v(a):
     out = a.out or a.c2v_file.with_name(a.c2v_file.name + ".paths.txt")
     print(f"{c2v.extract_paths(a.c2v_file, out)} paths -> {out}")
@@ -1171,6 +1199,32 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--tolerance", type=int, default=3, help="lines between a sink and a truth line")
     s.add_argument("--any-cwe", action="store_true", help="count hits by alerts of any CWE")
     s.set_defaults(func=cmd_bench)
+
+    s = sub.add_parser(
+        "corpus-candidates", help="candidate cases from OSV advisory dumps (one fix commit each)"
+    )
+    s.add_argument("dumps", type=Path, nargs="+", help="OSV <Ecosystem>/all.zip files (PyPI, npm, Go, ...)")
+    s.add_argument("--per-repo", type=int, default=2, help="at most this many cases per repository")
+    s.add_argument(
+        "--exclude-corpus", type=Path, nargs="*", help="skip repositories already in these corpora"
+    )
+    s.add_argument("--out", type=Path, required=True)
+    s.set_defaults(func=cmd_corpus_candidates)
+
+    s = sub.add_parser(
+        "corpus-mine",
+        help="scan fixed vulnerabilities one by one; keep those identified before and gone after",
+    )
+    s.add_argument("--corpus", type=Path, required=True, help="cases JSON (e.g. from corpus-candidates)")
+    s.add_argument("--out", type=Path, required=True, help="dataset.jsonl, cases.jsonl (resumable), alerts/")
+    s.add_argument("--languages", nargs="*", help="only these languages")
+    s.add_argument("--limit", type=int, help="try at most this many new cases")
+    s.add_argument("--max-hours", type=float, help="stop starting new cases after this long")
+    s.add_argument("--max-negatives", type=int, default=30, help="surviving alerts kept per case")
+    s.add_argument("--timeout", type=int, default=900, help="seconds per git fetch / scan")
+    s.add_argument("--workers", type=int, default=2, help="cases mined in parallel")
+    s.add_argument("--summary", action="store_true", help="only print progress so far")
+    s.set_defaults(func=cmd_corpus_mine)
 
     s = sub.add_parser("scan", help="run Fortify on each Maven project")
     s.add_argument("--command", required=True, help='template, e.g. "sh mvn-run.sh {project_dir} {name}"')
