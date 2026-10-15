@@ -1,0 +1,206 @@
+# autoaudit's own Opengrep/Semgrep taint rules for C# web code (ASP.NET Core,
+# ASP.NET MVC / Web Forms). Written for this project.
+rules:
+  - id: autoaudit-csharp-sqli
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: User-controlled data reaches a SQL statement.
+    metadata: {cwe: ["CWE-89: SQL Injection"], category: security}
+    pattern-sources: &sources
+      - pattern-either:
+          - pattern: Request.Query
+          - pattern: Request.Form
+          - pattern: Request.QueryString
+          - pattern: Request.Params
+          - pattern: Request.Cookies
+          - pattern: Request.Headers
+          - pattern: Request.RouteValues
+          - pattern: Request.Body
+          - pattern: Request.Path
+          - pattern: Request.Url
+          - pattern: Request.RawUrl
+          - pattern: Request.UrlReferrer
+          - pattern: Request.UserAgent
+          - pattern: Request[...]
+          - pattern: $CTX.Request.Query
+          - pattern: $CTX.Request.Form
+          - pattern: $CTX.Request.Headers
+          - pattern: $CTX.Request.Cookies
+          - pattern: $CTX.Request.Body
+          - pattern: $CTX.Request.QueryString
+          - pattern: $CTX.Request.Path
+          - patterns:
+              - pattern-inside: |
+                  public $RET $ACTION(..., [FromQuery] $T $P, ...) { ... }
+              - pattern: $P
+          - patterns:
+              - pattern-inside: |
+                  public $RET $ACTION(..., [FromBody] $T $P, ...) { ... }
+              - pattern: $P
+          - patterns:
+              - pattern-inside: |
+                  public $RET $ACTION(..., [FromForm] $T $P, ...) { ... }
+              - pattern: $P
+          - patterns:
+              - pattern-inside: |
+                  public $RET $ACTION(..., [FromRoute] $T $P, ...) { ... }
+              - pattern: $P
+          - patterns:
+              - pattern-inside: |
+                  public $RET $ACTION(..., [FromHeader] $T $P, ...) { ... }
+              - pattern: $P
+          - patterns:
+              - pattern-inside: |
+                  class $C : Controller { ... }
+              - pattern-inside: |
+                  public $RET $ACTION(..., string $P, ...) { ... }
+              - pattern: $P
+          - patterns:
+              - pattern-inside: |
+                  class $C : ControllerBase { ... }
+              - pattern-inside: |
+                  public $RET $ACTION(..., string $P, ...) { ... }
+              - pattern: $P
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: new SqlCommand($Q, ...)
+              - pattern: new SqliteCommand($Q, ...)
+              - pattern: new NpgsqlCommand($Q, ...)
+              - pattern: new MySqlCommand($Q, ...)
+              - pattern: new OleDbCommand($Q, ...)
+              - pattern: new SqlDataAdapter($Q, ...)
+              - pattern: $CMD.CommandText = $Q
+              - pattern: $DB.ExecuteSqlRaw($Q, ...)
+              - pattern: $DB.ExecuteSqlRawAsync($Q, ...)
+              - pattern: $DB.ExecuteSqlCommand($Q, ...)
+              - pattern: $DB.FromSqlRaw($Q, ...)
+              - pattern: $DB.SqlQueryRaw<$T>($Q, ...)
+              - pattern: $CONN.Query($Q, ...)
+              - pattern: $CONN.Query<$T>($Q, ...)
+              - pattern: $CONN.QueryAsync<$T>($Q, ...)
+              - pattern: $CONN.Execute($Q, ...)
+              - pattern: $CONN.ExecuteAsync($Q, ...)
+              - pattern: $CONN.ExecuteScalar($Q, ...)
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: int.Parse(...)
+          - pattern: long.Parse(...)
+          - pattern: Guid.Parse(...)
+          - pattern: Convert.ToInt32(...)
+
+  - id: autoaudit-csharp-cmdi
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: User-controlled data reaches an OS command.
+    metadata: {cwe: ["CWE-78: OS Command Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: Process.Start(...)
+          - pattern: System.Diagnostics.Process.Start(...)
+          - pattern: new ProcessStartInfo(...)
+          - pattern: $PSI.FileName = $X
+          - pattern: $PSI.Arguments = $X
+          - pattern: $PSI.ArgumentList.Add(...)
+
+  - id: autoaudit-csharp-path-traversal
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: User-controlled data selects a file path.
+    metadata: {cwe: ["CWE-22: Path Traversal"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: File.$M($P, ...)
+              - pattern: System.IO.File.$M($P, ...)
+              - pattern: Directory.$M($P, ...)
+              - pattern: new FileStream($P, ...)
+              - pattern: new StreamReader($P, ...)
+              - pattern: new StreamWriter($P, ...)
+              - pattern: new FileInfo($P)
+              - pattern: new DirectoryInfo($P)
+              - pattern: PhysicalFile($P, ...)
+              - pattern: $C.PhysicalFile($P, ...)
+              - pattern: Response.WriteFile($P)
+              - pattern: Response.TransmitFile($P)
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: Path.GetFileName(...)
+          - pattern: System.IO.Path.GetFileName(...)
+          - pattern: Path.GetFileNameWithoutExtension(...)
+          - pattern: int.Parse(...)
+
+  - id: autoaudit-csharp-xss
+    mode: taint
+    languages: [csharp]
+    severity: WARNING
+    message: User-controlled data is written into HTML without encoding.
+    metadata: {cwe: ["CWE-79: Cross-site Scripting"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: Html.Raw(...)
+          - pattern: new HtmlString(...)
+          - pattern: new MvcHtmlString(...)
+          - pattern: MvcHtmlString.Create(...)
+          - pattern: Response.Write(...)
+          - pattern: $CTX.Response.WriteAsync(...)
+          - pattern: Content($X, "text/html", ...)
+          - pattern: $LIT.Text = $X
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: HttpUtility.HtmlEncode(...)
+          - pattern: WebUtility.HtmlEncode(...)
+          - pattern: HtmlEncoder.Default.Encode(...)
+          - pattern: $ENC.Encode(...)
+          - pattern: Server.HtmlEncode(...)
+          - pattern: AntiXssEncoder.HtmlEncode(...)
+          - pattern: Encoder.HtmlEncode(...)
+          - pattern: $SANITIZER.Sanitize(...)
+          - pattern: int.Parse(...)
+
+  - id: autoaudit-csharp-ssrf
+    mode: taint
+    languages: [csharp]
+    severity: WARNING
+    message: User-controlled data selects the URL of a server-side request.
+    metadata: {cwe: ["CWE-918: Server-Side Request Forgery"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $HC.GetAsync($U, ...)
+              - pattern: $HC.GetStringAsync($U, ...)
+              - pattern: $HC.GetByteArrayAsync($U, ...)
+              - pattern: $HC.GetStreamAsync($U, ...)
+              - pattern: $HC.PostAsync($U, ...)
+              - pattern: new HttpRequestMessage($M, $U)
+              - pattern: WebRequest.Create($U)
+              - pattern: HttpWebRequest.Create($U)
+              - pattern: $WC.DownloadString($U)
+              - pattern: $WC.DownloadData($U)
+          - focus-metavariable: $U
+
+  - id: autoaudit-csharp-deserialization
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: User-controlled data is deserialized with type information.
+    metadata: {cwe: ["CWE-502: Deserialization of Untrusted Data"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: new BinaryFormatter().Deserialize(...)
+          - pattern: $BF.Deserialize(...)
+          - pattern: JsonConvert.DeserializeObject(..., new JsonSerializerSettings { ..., TypeNameHandling = $TNH, ... })
+          - pattern: new LosFormatter().Deserialize(...)
+          - pattern: new ObjectStateFormatter().Deserialize(...)
+          - pattern: new NetDataContractSerializer().Deserialize(...)
+          - pattern: new JavaScriptSerializer(new SimpleTypeResolver()).Deserialize(...)

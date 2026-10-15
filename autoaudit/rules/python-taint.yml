@@ -1,0 +1,223 @@
+# autoaudit's own Opengrep/Semgrep taint rules for Python web code (Flask,
+# Django, DRF, FastAPI/Starlette request objects). Written for this project.
+rules:
+  - id: autoaudit-python-sqli
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: User-controlled data reaches a SQL statement.
+    metadata: {cwe: ["CWE-89: SQL Injection"], category: security}
+    pattern-sources: &sources
+      - pattern-either:
+          - pattern: flask.request.$ATTR
+          - pattern: request.args
+          - pattern: request.form
+          - pattern: request.values
+          - pattern: request.files
+          - pattern: request.cookies
+          - pattern: request.headers
+          - pattern: request.json
+          - pattern: request.data
+          - pattern: request.get_json(...)
+          - pattern: request.get_data(...)
+          - pattern: request.view_args
+          - pattern: request.path
+          - pattern: request.url
+          - pattern: request.query_string
+          - pattern: request.GET
+          - pattern: request.POST
+          - pattern: request.COOKIES
+          - pattern: request.META
+          - pattern: request.FILES
+          - pattern: request.body
+          - pattern: request.query_params
+          - pattern: request.path_params
+          - pattern: $SELF.request.GET
+          - pattern: $SELF.request.POST
+          - pattern: $SELF.request.query_params
+          - pattern: $SELF.request.data
+          - pattern: $SELF.kwargs
+          - pattern: $SELF.get_argument(...)
+          - pattern: $SELF.get_body_argument(...)
+          - pattern: $SELF.get_query_argument(...)
+          - pattern: await request.json()
+          - pattern: await request.form()
+          - pattern: await request.body()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $C.execute($Q, ...)
+              - pattern: $C.executemany($Q, ...)
+              - pattern: $C.executescript($Q)
+              - pattern: $M.objects.raw($Q, ...)
+              - pattern: $M.objects.extra(...)
+              - pattern: sqlalchemy.text($Q)
+              - pattern: text($Q)
+              - pattern: $DB.engine.execute($Q, ...)
+              - pattern: pandas.read_sql($Q, ...)
+              - pattern: pd.read_sql($Q, ...)
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: int(...)
+          - pattern: float(...)
+          - pattern: uuid.UUID(...)
+
+  - id: autoaudit-python-cmdi
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: User-controlled data reaches an OS command.
+    metadata: {cwe: ["CWE-78: OS Command Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: os.system(...)
+          - pattern: os.popen(...)
+          - pattern: os.popen2(...)
+          - pattern: os.popen3(...)
+          - pattern: commands.getoutput(...)
+          - pattern: commands.getstatusoutput(...)
+          - pattern: subprocess.$F(..., shell=True, ...)
+          - pattern: subprocess.getoutput(...)
+          - pattern: subprocess.getstatusoutput(...)
+          - pattern: os.execl(...)
+          - pattern: os.execv(...)
+          - pattern: os.spawnl(...)
+          - pattern: asyncio.create_subprocess_shell(...)
+          - patterns:
+              - pattern: subprocess.$F([$CMD, ...], ...)
+              - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: shlex.quote(...)
+          - pattern: pipes.quote(...)
+
+  - id: autoaudit-python-path-traversal
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: User-controlled data selects a file path.
+    metadata: {cwe: ["CWE-22: Path Traversal"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: open($P, ...)
+              - pattern: io.open($P, ...)
+              - pattern: codecs.open($P, ...)
+              - pattern: os.remove($P)
+              - pattern: os.unlink($P)
+              - pattern: os.rmdir($P)
+              - pattern: os.rename($P, ...)
+              - pattern: os.listdir($P)
+              - pattern: shutil.rmtree($P, ...)
+              - pattern: shutil.copy($P, ...)
+              - pattern: shutil.copyfile($P, ...)
+              - pattern: shutil.move($P, ...)
+              - pattern: pathlib.Path($P)
+              - pattern: Path($P)
+              - pattern: flask.send_file($P, ...)
+              - pattern: send_file($P, ...)
+              - pattern: FileResponse($P, ...)
+              - pattern: tarfile.open($P, ...)
+              - pattern: zipfile.ZipFile($P, ...)
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: os.path.basename(...)
+          - pattern: secure_filename(...)
+          - pattern: werkzeug.utils.secure_filename(...)
+          - pattern: safe_join(...)
+          - pattern: werkzeug.security.safe_join(...)
+          - pattern: int(...)
+
+  - id: autoaudit-python-xss
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: User-controlled data is rendered as HTML without escaping.
+    metadata: {cwe: ["CWE-79: Cross-site Scripting"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: Markup(...)
+          - pattern: markupsafe.Markup(...)
+          - pattern: mark_safe(...)
+          - pattern: django.utils.safestring.mark_safe(...)
+          - pattern: format_html(...)
+          - pattern: HttpResponse(...)
+          - pattern: django.http.HttpResponse(...)
+          - pattern: make_response(...)
+          - pattern: flask.make_response(...)
+          - pattern: HTMLResponse(...)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: escape(...)
+          - pattern: html.escape(...)
+          - pattern: markupsafe.escape(...)
+          - pattern: bleach.clean(...)
+          - pattern: json.dumps(...)
+          - pattern: jsonify(...)
+          - pattern: int(...)
+
+  - id: autoaudit-python-code-injection
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: User-controlled data is evaluated as code or as a template.
+    metadata: {cwe: ["CWE-94: Code Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+          - pattern: compile(...)
+          - pattern: render_template_string(...)
+          - pattern: flask.render_template_string(...)
+          - pattern: jinja2.Template(...)
+          - pattern: Template(...)
+          - pattern: $ENV.from_string(...)
+          - pattern: importlib.import_module(...)
+          - pattern: __import__(...)
+
+  - id: autoaudit-python-deserialization
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: User-controlled data is deserialized into objects.
+    metadata: {cwe: ["CWE-502: Deserialization of Untrusted Data"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: pickle.loads(...)
+          - pattern: pickle.load(...)
+          - pattern: cPickle.loads(...)
+          - pattern: dill.loads(...)
+          - pattern: marshal.loads(...)
+          - pattern: shelve.open(...)
+          - pattern: yaml.load(...)
+          - pattern: yaml.unsafe_load(...)
+          - pattern: jsonpickle.decode(...)
+          - pattern: torch.load(...)
+    pattern-sanitizers:
+      - pattern: yaml.load(..., Loader=yaml.SafeLoader)
+
+  - id: autoaudit-python-ssrf
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: User-controlled data selects the URL of a server-side request.
+    metadata: {cwe: ["CWE-918: Server-Side Request Forgery"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M($U, ...)
+              - pattern: httpx.$M($U, ...)
+              - pattern: urllib.request.urlopen($U, ...)
+              - pattern: urlopen($U, ...)
+              - pattern: urllib.request.Request($U, ...)
+              - pattern: $SESSION.get($U, ...)
+              - pattern: aiohttp.ClientSession().$M($U, ...)
+          - focus-metavariable: $U

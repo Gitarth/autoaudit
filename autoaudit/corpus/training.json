@@ -1,0 +1,542 @@
+{
+ "description": "Training corpus for learned triage: real projects checked out just before a public security fix, in seven languages. `autoaudit bench label --corpus <this>` scans each project before and after its fix and labels alerts (see bench.label). Cases were found in GitHub Security Advisories / OSV and every fix commit was fetched and checked against its advisory. Licenses are each project's own; the corpus file stores only references, and the source code is fetched at build time. Do not redistribute checked-out code with a trained model.",
+ "cases": [
+  {
+   "name": "halo",
+   "repo": "https://github.com/halo-dev/halo",
+   "fix": "c0de760fd060b141d11e26bba30dcf364fc292b0",
+   "id": "CVE-2026-55439",
+   "cwe": "CWE-22",
+   "license": "GPL-3.0",
+   "summary": "Backup download resolves a user-influenced filename under the backups root without checkDirectoryTraversal (MigrationServiceImpl.download).",
+   "language": "java"
+  },
+  {
+   "name": "kkFileView",
+   "repo": "https://github.com/kekingcn/kkFileView",
+   "fix": "b65a04857cebab2692d14ab7cdb318c2f67ee537",
+   "id": "kkFileView-b65a048",
+   "cwe": "CWE-22",
+   "license": "Apache-2.0",
+   "summary": "The file name taken from a remote preview URL may contain ../ and is used to build the local download path (WebUtils / OnlinePreviewController.onlinePreview).",
+   "language": "java"
+  },
+  {
+   "name": "jeecg-boot",
+   "repo": "https://github.com/jeecgboot/jeecg-boot",
+   "fix": "0fc374de4745eac52620eeb8caf6a7b76127529a",
+   "id": "CVE-2022-47105",
+   "cwe": "CWE-89",
+   "license": "Apache-2.0",
+   "summary": "SQL injection through /sys/dict/queryTableData: the keyword blacklist in SqlInjectionUtil missed geohash/gtid_* and multi-line comments. The query is built by MyBatis ${} in SysDictMapper.xml; the Java-side sink is the mapper call.",
+   "locations": [
+    {
+     "path": "jeecg-module-system/jeecg-system-biz/src/main/java/org/jeecg/modules/system/controller/SysDictController.java",
+     "lines": [
+      356
+     ]
+    },
+    {
+     "path": "jeecg-module-system/jeecg-system-biz/src/main/java/org/jeecg/modules/system/service/impl/SysDictServiceImpl.java",
+     "lines": [
+      392
+     ]
+    }
+   ],
+   "language": "java"
+  },
+  {
+   "name": "spring-cloud-function",
+   "repo": "https://github.com/spring-cloud/spring-cloud-function",
+   "fix": "0e89ee27b2e76138c16bcba6f4bca906c4f3744f",
+   "id": "CVE-2022-22963",
+   "cwe": "CWE-917",
+   "license": "Apache-2.0",
+   "summary": "The spring.cloud.function.routing-expression message header is parsed and evaluated as SpEL in a StandardEvaluationContext (RoutingFunction.functionFromExpression).",
+   "language": "java"
+  },
+  {
+   "name": "javamelody",
+   "repo": "https://github.com/javamelody/javamelody",
+   "fix": "ef111822562d0b9365bd3e671a75b65bd0613353",
+   "id": "CVE-2018-15531",
+   "cwe": "CWE-611",
+   "license": "Apache-2.0",
+   "summary": "XXE: the SOAP request body is parsed by an XMLInputFactory with DTDs and external entities enabled (PayloadNameRequestWrapper.parseSoapMethodName).",
+   "language": "java"
+  },
+  {
+   "name": "hsweb-framework",
+   "language": "java",
+   "repo": "https://github.com/hs-web/hsweb-framework",
+   "fix": "8009845b577d8a2c4bbf4fdd8e8913799a714be6",
+   "id": "CVE-2026-11470",
+   "cwe": "CWE-22",
+   "license": "Apache-2.0",
+   "summary": "hsweb-system-file/.../FileUploadProperties.java createStaticSavePath used the uploaded filename as-is in absPath + \"/\" + fileName where the upload is written (../ escapes); fix reduces it to a normalized base name.",
+   "advisory": "https://github.com/advisories/GHSA-vjmr-f5fc-vr2w"
+  },
+  {
+   "name": "openremote",
+   "language": "java",
+   "repo": "https://github.com/openremote/openremote",
+   "fix": "02ac83074b81617add814b2a72d459abdf374147",
+   "id": "GHSA-cgfv-jrfp-2r7v",
+   "cwe": "CWE-89",
+   "license": "AGPL-3.0-or-later",
+   "summary": "manager/.../datapoint/AssetDatapointService.java buildCopyToStdoutQuery concatenated attacker-controlled asset/attribute names into a COPY (SELECT ... crosstab(...)) statement run via CopyManager.copyOut; fix uses generated keys.",
+   "advisory": "https://github.com/advisories/GHSA-cgfv-jrfp-2r7v"
+  },
+  {
+   "name": "sakai",
+   "language": "java",
+   "repo": "https://github.com/sakaiproject/sakai",
+   "fix": "2696b4b48cbef2e81512f52f84f7477adff78b27",
+   "id": "CVE-2026-54049",
+   "cwe": "CWE-79",
+   "license": "ECL-2.0",
+   "summary": "conversations/impl/.../ConversationsServiceImpl.java saveTopic/savePost/saveComment stored unsanitized message HTML from the REST API, later rendered with unsafeHTML (stored XSS); fix runs FormattedText.processFormattedText.",
+   "advisory": "https://github.com/advisories/GHSA-w2x5-gv52-9ccv"
+  },
+  {
+   "name": "spring-boot-admin",
+   "language": "java",
+   "repo": "https://github.com/codecentric/spring-boot-admin",
+   "fix": "c14c3ec12533f71f84de9ce3ce5ceb7991975f75",
+   "id": "CVE-2022-46166",
+   "cwe": "CWE-917",
+   "license": "Apache-2.0",
+   "summary": "spring-boot-admin-server/.../notify/*Notifier.java evaluated user-configurable SpEL message templates with StandardEvaluationContext (RCE); fix uses SimpleEvaluationContext. Release commit 2.6.10 (no commit in advisory).",
+   "advisory": "https://github.com/advisories/GHSA-w3x5-427h-wfq6"
+  },
+  {
+   "name": "syncope",
+   "language": "java",
+   "repo": "https://github.com/apache/syncope",
+   "fix": "cd52ffeb97cc11d3622e404e8874a92f73453dd7",
+   "id": "CVE-2026-23795",
+   "cwe": "CWE-611",
+   "license": "Apache-2.0",
+   "summary": "client/idrepo/console/.../ParametersModalPanel.java isXML() parsed admin-supplied parameter values with a default SAXParserFactory XMLReader (XXE); fix enables secure processing and disallow-doctype-decl.",
+   "advisory": "https://github.com/advisories/GHSA-73f3-rqqf-2j54"
+  },
+  {
+   "name": "copyparty",
+   "language": "python",
+   "repo": "https://github.com/9001/copyparty",
+   "fix": "043e3c7dd683113e2b1c15cacb9c8e68f76513ff",
+   "id": "CVE-2023-37474",
+   "cwe": "CWE-22",
+   "license": "MIT",
+   "summary": "copyparty/httpcli.py /.cpr static handler joined self.vpath[5:] onto the web dir and served it with tx_file without containment; fix checks the resolved path.",
+   "advisory": "https://github.com/advisories/GHSA-pxfv-7rr3-2qjg"
+  },
+  {
+   "name": "geonode",
+   "language": "python",
+   "repo": "https://github.com/GeoNode/geonode",
+   "fix": "2fdfe919f299b21f1609bf898f9dcfde58770ac0",
+   "id": "CVE-2023-26043",
+   "cwe": "CWE-611",
+   "license": "GPL-2.0-or-later",
+   "summary": "Uploaded SLD XML parsed with lxml etree.XML(sld) with entity resolution (geonode/geoserver/views.py dataset_style_upload, helpers.py); fix passes XMLParser(resolve_entities=False).",
+   "advisory": "https://github.com/advisories/GHSA-mcmc-c59m-pqq8"
+  },
+  {
+   "name": "isso",
+   "language": "python",
+   "repo": "https://github.com/isso-comments/isso",
+   "fix": "0afbfe0691ee237963e8fb0b2ee01c9e55ca2144",
+   "id": "CVE-2026-27469",
+   "cwe": "CWE-79",
+   "license": "MIT",
+   "summary": "isso/views/comments.py API.new escaped 'website' with quote=False and API.edit/moderate did not escape author/website before storing; fix escapes with quote=True.",
+   "advisory": "https://github.com/advisories/GHSA-9fww-8cpr-q66r"
+  },
+  {
+   "name": "label-studio",
+   "language": "python",
+   "repo": "https://github.com/HumanSignal/label-studio",
+   "fix": "55dd6af4716b92f2bb213fe461d1ffbc380c6a64",
+   "id": "CVE-2023-47116",
+   "cwe": "CWE-918",
+   "license": "Apache-2.0",
+   "summary": "label_studio/core/utils/io.py validate_ip (used by ssrf_safe_get before requests.get on import URLs) blocked too few ranges; fix adds an exhaustive banned-subnet list.",
+   "advisory": "https://github.com/advisories/GHSA-p59w-9gqw-wj8r"
+  },
+  {
+   "name": "modoboa",
+   "language": "python",
+   "repo": "https://github.com/modoboa/modoboa",
+   "fix": "27a7aa133d3608fe8c25ae39125d1012c333cbfa",
+   "id": "CVE-2026-27602",
+   "cwe": "CWE-78",
+   "license": "ISC",
+   "summary": "modoboa/lib/sysutils.py exec_cmd ran shell commands built by formatting user data (e.g. SpamassassinClient.learn in modoboa/amavis/lib.py); fix uses argument lists and makes shell opt-in.",
+   "advisory": "https://github.com/advisories/GHSA-wwv8-cqpr-vx3m"
+  },
+  {
+   "name": "pgadmin4",
+   "language": "python",
+   "repo": "https://github.com/pgadmin-org/pgadmin4",
+   "fix": "4e49d752fba72953acceeb7f4aa2e6e32d25853d",
+   "id": "CVE-2024-2044",
+   "cwe": "CWE-502",
+   "license": "PostgreSQL",
+   "summary": "web/pgadmin/utils/session.py FileBackedSessionManager built session file paths from the cookie sid with os.path.join and unpickled them (traversal to attacker file -> RCE); fix uses safe_join.",
+   "advisory": "https://github.com/advisories/GHSA-rj98-crf4-g69w"
+  },
+  {
+   "name": "psiTurk",
+   "language": "python",
+   "repo": "https://github.com/NYUCCL/psiTurk",
+   "fix": "47787e15cecd66f2aa87687bf852ae0194a4335f",
+   "id": "CVE-2021-4315",
+   "cwe": "CWE-94",
+   "license": "MIT",
+   "summary": "psiturk/experiment.py advertisement()/give_consent(): request.args['mode'] concatenated into template source via insert_mode() and rendered by render_template_string (SSTI); fix passes mode as a variable.",
+   "advisory": "https://github.com/advisories/GHSA-9mq4-9556-6qxq"
+  },
+  {
+   "name": "pyload",
+   "language": "python",
+   "repo": "https://github.com/pyload/pyload",
+   "fix": "134edcdf6e2a10c393743c254da3d9d90b74258f",
+   "id": "CVE-2025-55156",
+   "cwe": "CWE-89",
+   "license": "AGPL-3.0-only",
+   "summary": "src/pyload/core/database/file_database.py update_link_info joined URLs into an f-string SELECT ... IN ('...') passed to self.c.execute; fix uses ? placeholders.",
+   "advisory": "https://github.com/advisories/GHSA-pwh4-6r3m-j2rf"
+  },
+  {
+   "name": "ftp-srv",
+   "language": "javascript",
+   "repo": "https://github.com/autovance/ftp-srv",
+   "fix": "457b859450a37cba10ff3c431eb4aa67771122e3",
+   "id": "CVE-2020-26299",
+   "cwe": "CWE-22",
+   "license": "MIT",
+   "summary": "src/fs.js FileSystem._resolvePath() joined client paths (backslashes) without confining them to the root before fs read/write/delete; fix rebuilds path resolution.",
+   "advisory": "https://github.com/advisories/GHSA-pmw4-jgxx-pcq9"
+  },
+  {
+   "name": "git-diff-apply",
+   "language": "javascript",
+   "repo": "https://github.com/kellyselden/git-diff-apply",
+   "fix": "106d61d3ae723b4257c2a13e67b95eb40a27e0b5",
+   "id": "CVE-2019-10776",
+   "cwe": "CWE-78",
+   "license": "MIT",
+   "summary": "src/index.js gitDiffApply() interpolated remoteUrl into utils.run(`git clone ${remoteUrl} ${_tmpDir}`) (exec); fix uses spawn with an argument array.",
+   "advisory": "https://github.com/advisories/GHSA-84cm-v6jp-gjmr"
+  },
+  {
+   "name": "parse-server",
+   "language": "javascript",
+   "repo": "https://github.com/parse-community/parse-server",
+   "fix": "a6e654943536932904a69b51e513507fcf90a504",
+   "id": "CVE-2024-27298",
+   "cwe": "CWE-89",
+   "license": "Apache-2.0",
+   "summary": "src/Adapters/Storage/Postgres/PostgresStorageAdapter.js literalizeRegexPart() escaped only the first single quote of a user $regex value (replace without /g) before concatenating it into SQL; fix adds /g.",
+   "advisory": "https://github.com/advisories/GHSA-6927-3vr9-fxf2"
+  },
+  {
+   "name": "serve-index",
+   "language": "javascript",
+   "repo": "https://github.com/expressjs/serve-index",
+   "fix": "7381a1d1458959e57ee53ac932b06ff17904777e",
+   "id": "CVE-2015-8856",
+   "cwe": "CWE-79",
+   "license": "MIT",
+   "summary": "index.js html()/htmlPath(): directory path, file names and view parameter written into the listing HTML unescaped; fix wraps them in escapeHtml().",
+   "advisory": "https://github.com/advisories/GHSA-v633-x5vv-hqwc"
+  },
+  {
+   "name": "systeminformation",
+   "language": "javascript",
+   "repo": "https://github.com/sebhildebrandt/systeminformation",
+   "fix": "07daa05fb06f24f96297abaa30c2ace8bfd8b525",
+   "id": "CVE-2021-21315",
+   "cwe": "CWE-78",
+   "license": "MIT",
+   "summary": "lib/processes.js processLoad()/services() and docker/network functions: array parameters bypassed sanitizeShellString and reached child_process exec command strings; fix adds type checks.",
+   "advisory": "https://github.com/advisories/GHSA-2m8v-572m-ff2v"
+  },
+  {
+   "name": "totaljs-framework",
+   "language": "javascript",
+   "repo": "https://github.com/totaljs/framework",
+   "fix": "887b0fa9e162ef7a2dd9cec20a5ca122726373b3",
+   "id": "CVE-2021-23389",
+   "cwe": "CWE-94",
+   "license": "MIT",
+   "summary": "utils.js exports.set()/get() built JS source from the caller's path string and compiled it with new Function; fix rejects dangerous characters.",
+   "advisory": "https://github.com/advisories/GHSA-7fm6-gxqg-2pwr"
+  },
+  {
+   "name": "directus",
+   "language": "typescript",
+   "repo": "https://github.com/directus/directus",
+   "fix": "ff53d3e69a602d05342e15d9bb616884833ddbff",
+   "id": "CVE-2023-26492",
+   "cwe": "CWE-918",
+   "license": "GPL-3.0-only",
+   "summary": "api/src/services/files.ts FilesService.importOne() checked the import URL's resolved IP before axios (DNS-rebinding TOCTOU); fix validates the connected IP in a shared axios instance.",
+   "advisory": "https://github.com/advisories/GHSA-j3rg-3rgm-537h"
+  },
+  {
+   "name": "lobe-chat",
+   "language": "typescript",
+   "repo": "https://github.com/lobehub/lobe-chat",
+   "fix": "465665a735556669ee30446c7ea9049a20cc7c37",
+   "id": "CVE-2024-32964",
+   "cwe": "CWE-918",
+   "license": "MIT",
+   "summary": "src/app/api/proxy/route.ts POST: URL from the request body passed straight to fetch(url) and proxied back (SSRF); fix rejects private IPs.",
+   "advisory": "https://github.com/advisories/GHSA-mxhq-xw3g-rphc"
+  },
+  {
+   "name": "md-to-pdf",
+   "language": "typescript",
+   "repo": "https://github.com/simonhaenisch/md-to-pdf",
+   "fix": "a716259c548c82fa1d3b14a3422e9100619d2d8a",
+   "id": "CVE-2021-23639",
+   "cwe": "CWE-94",
+   "license": "MIT",
+   "summary": "src/lib/md-to-pdf.ts convertMdToPdf() called grayMatter() with default options, so ---js front matter in untrusted markdown was evaluated (RCE); fix disables the js engine.",
+   "advisory": "https://github.com/advisories/GHSA-x949-7cm6-fm6p"
+  },
+  {
+   "name": "vendure",
+   "language": "typescript",
+   "repo": "https://github.com/vendure-ecommerce/vendure",
+   "fix": "e2ee0c43159b3d13b51b78654481094fdd4850c5",
+   "id": "CVE-2024-48914",
+   "cwe": "CWE-22",
+   "license": "GPL-3.0-or-later",
+   "summary": "packages/asset-server-plugin/src/plugin.ts: decodeURIComponent(req.path) passed into path.join(cacheDir, ...) in getFileNameFromRequest and the 404 handler (file read via ../); fix adds sanitizeFilePath().",
+   "advisory": "https://github.com/advisories/GHSA-r9mq-3c9r-fmjq"
+  },
+  {
+   "name": "gogs",
+   "language": "go",
+   "repo": "https://github.com/gogs/gogs",
+   "fix": "a000f0c7a632ada40e6829abdeea525db4c0fc2d",
+   "id": "CVE-2026-26194",
+   "cwe": "CWE-78",
+   "license": "MIT",
+   "summary": "internal/database/release.go DeleteReleaseOfRepoByID ran git tag -d <TagName> without end-of-options, so a tag name starting with '-' became a git option (argument injection); fix uses gitRepo.DeleteTag. (Advisory: CWE-88 argument injection, filed under CWE-78 so the command-injection rules can match it.)",
+   "advisory": "https://github.com/advisories/GHSA-v9vm-r24h-6rqm"
+  },
+  {
+   "name": "grafana",
+   "language": "go",
+   "repo": "https://github.com/grafana/grafana",
+   "fix": "c798c0e958d15d9cc7f27c72113d572fa58545ce",
+   "id": "CVE-2021-43798",
+   "cwe": "CWE-22",
+   "license": "AGPL-3.0-only",
+   "summary": "pkg/api/plugins.go HTTPServer.getPluginAssets: filepath.Clean of the wildcard URL parameter joined onto plugin.PluginDir and served, so ../ escaped the plugin dir; fix cleans an absolute path and uses filepath.Rel.",
+   "advisory": "https://github.com/advisories/GHSA-8pjx-jj86-j47p"
+  },
+  {
+   "name": "homer",
+   "language": "go",
+   "repo": "https://github.com/sipcapture/homer",
+   "fix": "a7d027dc684b210b62285c49f555ac88d64f35f0",
+   "id": "CVE-2026-62251",
+   "cwe": "CWE-89",
+   "license": "AGPL-3.0-only",
+   "summary": "src/coordinator/handlers/statistics_v4.go StatisticsHandler.V4StatisticsQuery passed the user-supplied rawquery field straight to h.flightService.Query (DuckDB SQL); fix validates it with sqlvalidator.ValidateRawSQL. Merge commit (diff vs first parent).",
+   "advisory": "https://github.com/advisories/GHSA-f46q-3v67-fmm4"
+  },
+  {
+   "name": "perses",
+   "language": "go",
+   "repo": "https://github.com/perses/perses",
+   "fix": "75e5471040ccb5674ea8d25c2aa16c80ccb70b2a",
+   "id": "CVE-2026-63445",
+   "cwe": "CWE-22",
+   "license": "Apache-2.0",
+   "summary": "internal/api/toolbox/list.go: the 'project' query parameter was used unvalidated to build filesystem-database paths (?project=../projects reads arbitrary files); fix calls common.ValidateID. Merge commit (diff vs first parent).",
+   "advisory": "https://github.com/advisories/GHSA-vr5f-w35q-98jp"
+  },
+  {
+   "name": "podinfo",
+   "language": "go",
+   "repo": "https://github.com/stefanprodan/podinfo",
+   "fix": "cbebb20fd48588d36fc7ff3e874c128eb89692f4",
+   "id": "CVE-2026-43644",
+   "cwe": "CWE-79",
+   "license": "Apache-2.0",
+   "summary": "pkg/api/http/echo.go Server.echoHandler reflected the request body with w.Write(body) and no Content-Type, so sniffing served it as HTML (reflected XSS); fix sets octet-stream, nosniff and CSP. Merge commit.",
+   "advisory": "https://github.com/advisories/GHSA-q23m-vm9r-5745"
+  },
+  {
+   "name": "seaweedfs",
+   "language": "go",
+   "repo": "https://github.com/seaweedfs/seaweedfs",
+   "fix": "69da20bdaec923e5a43d8aa71bf3c0a2051fc019",
+   "id": "CVE-2026-73080",
+   "cwe": "CWE-918",
+   "license": "Apache-2.0",
+   "summary": "weed/server/volume_grpc_remote.go VolumeServer.FetchAndWriteNeedle fetched a caller-supplied S3 remote endpoint without auth (loopback/IMDS reachable, response read back); fix adds auth, validateRemoteEndpoint and a guarded dialer.",
+   "advisory": "https://github.com/advisories/GHSA-87fv-vqqr-m4jr"
+  },
+  {
+   "name": "semaphore",
+   "language": "go",
+   "repo": "https://github.com/semaphoreui/semaphore",
+   "fix": "7e8a9434bd81b82cf42220151c74801ea97542d6",
+   "id": "CVE-2026-73294",
+   "cwe": "CWE-78",
+   "license": "MIT",
+   "summary": "db_lib/CmdGitClient.go: user-set repository GitURL/branch passed to exec'd git commands (ls-remote, clone, pull) without --end-of-options (--upload-pack=<cmd> RCE); fix adds --end-of-options and ValidateGitURL.",
+   "advisory": "https://github.com/advisories/GHSA-xp7j-h7jc-4w8p"
+  },
+  {
+   "name": "admidio",
+   "language": "php",
+   "repo": "https://github.com/Admidio/admidio",
+   "fix": "f6b7a966abe4d75e9f707d665d7b4b5570e3185a",
+   "id": "CVE-2026-42194",
+   "cwe": "CWE-918",
+   "license": "GPL-2.0-only",
+   "summary": "modules/sso/fetch_metadata.php: $_GET['url'] passed to file_get_contents($url) after only FILTER_VALIDATE_URL (SSRF); fix requires https and blocks private IPs.",
+   "advisory": "https://github.com/advisories/GHSA-hcjj-chvw-fmw9"
+  },
+  {
+   "name": "AzuraCast",
+   "language": "php",
+   "repo": "https://github.com/AzuraCast/AzuraCast",
+   "fix": "18c793b4427eb49e67a2fea99a89f1c9d9dd808d",
+   "id": "CVE-2026-42605",
+   "cwe": "CWE-22",
+   "license": "AGPL-3.0-or-later",
+   "summary": "backend/src/Service/Flow.php Flow::process(): request parameter flowIdentifier used raw to build chunk paths for file writes/moves (../ traversal); fix normalizes the path.",
+   "advisory": "https://github.com/advisories/GHSA-vp2f-cqqp-478j"
+  },
+  {
+   "name": "dolibarr",
+   "language": "php",
+   "repo": "https://github.com/Dolibarr/dolibarr",
+   "fix": "41709f07d0aef384723164877395ed081b44b810",
+   "id": "CVE-2018-25357",
+   "cwe": "CWE-94",
+   "license": "GPL-3.0-or-later",
+   "summary": "htdocs/install/step1.php: POST db_* parameters with the weak 'alpha' GETPOST filter were written by write_conf_file() into conf.php (PHP code injection); fix tightens the filters.",
+   "advisory": "https://github.com/advisories/GHSA-hxmh-2xc4-c894"
+  },
+  {
+   "name": "froxlor",
+   "language": "php",
+   "repo": "https://github.com/froxlor/froxlor",
+   "fix": "22249677107f8f39f8d4a238605641e87dab4343",
+   "id": "CVE-2026-26279",
+   "cwe": "CWE-78",
+   "license": "GPL-2.0-or-later",
+   "summary": "Admin-controlled settings values reached shell sinks unescaped: FileDir::safe_exec(\"wget ... | sh -s email=\" . adminmail) in lib/Froxlor/Cron/Http/LetsEncrypt/AcmeSh.php and passthru()/exec(strtr(...)) in lib/Froxlor/Cli/ConfigServices.php; fix adds escapeshellarg and repairs validation.",
+   "advisory": "https://github.com/advisories/GHSA-33mp-8p67-xj7c"
+  },
+  {
+   "name": "mantisbt",
+   "language": "php",
+   "repo": "https://github.com/mantisbt/mantisbt",
+   "fix": "6ad20bea2e01f33c6e4170775ae4d9dbe2c75325",
+   "id": "CVE-2026-47142",
+   "cwe": "CWE-89",
+   "license": "GPL-2.0-or-later",
+   "summary": "core/history_api.php history_query_result(): $t_history_order (from $p_query_options['order'] / history_order config) was concatenated unsanitized into the ORDER BY clause of the DbQuery SQL; fix whitelists it to 'ASC'/'DESC'.",
+   "advisory": "https://github.com/advisories/GHSA-mw6p-33vw-46cc"
+  },
+  {
+   "name": "torrentpier",
+   "language": "php",
+   "repo": "https://github.com/torrentpier/torrentpier",
+   "fix": "ed37e6e522f345f2b46147c6f53c1ab6dec1db9e",
+   "id": "CVE-2024-40624",
+   "cwe": "CWE-502",
+   "license": "MIT",
+   "summary": "library/includes/functions.php get_tracks() called @unserialize($_COOKIE[$c_name]) on a client-controlled cookie (also User::get_sessiondata); fix switches to json_decode.",
+   "advisory": "https://github.com/advisories/GHSA-fg86-4c2r-7wxw"
+  },
+  {
+   "name": "YOURLS",
+   "language": "php",
+   "repo": "https://github.com/YOURLS/YOURLS",
+   "fix": "e1e93476655107e6caab34e52259eb1c91079ec7",
+   "id": "CVE-2026-63135",
+   "cwe": "CWE-79",
+   "license": "MIT",
+   "summary": "includes/functions-infos.php yourls_get_domain()/yourls_get_favicon_url(): attacker-controlled referrer host/path echoed into stats-page HTML (stored XSS); fix validates host and wraps in yourls_esc_url.",
+   "advisory": "https://github.com/advisories/GHSA-5h77-88j3-r659"
+  },
+  {
+   "name": "AutoUpdater-NET",
+   "language": "csharp",
+   "repo": "https://github.com/ravibpatel/AutoUpdater.NET",
+   "fix": "1dc25f2bea6ea522dbac1512b5563c4746d539c3",
+   "id": "CVE-2019-20627",
+   "cwe": "CWE-611",
+   "license": "MIT",
+   "summary": "AutoUpdater.NET/AutoUpdater.cs parsed the remotely fetched appcast with new XmlDocument().Load(stream) and the default resolver (XXE); fix sets XmlResolver = null.",
+   "advisory": "https://github.com/advisories/GHSA-75p2-hgw4-g7f7"
+  },
+  {
+   "name": "C1-CMS-Foundation",
+   "language": "csharp",
+   "repo": "https://github.com/Orckestra/C1-CMS-Foundation",
+   "fix": "af856ab5a62d19acf6aea1b1f4c6c3c4985c9446",
+   "id": "CVE-2022-39256",
+   "cwe": "CWE-502",
+   "license": "MPL-1.1",
+   "summary": "Composite/Core/Serialization/CompositeJsonSerializer.cs deserializes untrusted JSON with TypeNameHandling.Auto; the allow-list in CompositeSerializationBinder.cs ignored generic type arguments; fix checks them recursively. Merge commit.",
+   "advisory": "https://github.com/advisories/GHSA-gfhp-jgp6-838j"
+  },
+  {
+   "name": "Dnn-Platform",
+   "language": "csharp",
+   "repo": "https://github.com/dnnsoftware/Dnn.Platform",
+   "fix": "4721dd9eef846936d3b1a3676499e46968d15feb",
+   "id": "CVE-2025-32372",
+   "cwe": "CWE-918",
+   "license": "MIT",
+   "summary": "DNN Platform/Library/Services/GeneratedImage/DnnImageHandler.cs: the 'Url' query parameter passed a weak StartsWith check in UriBelongsToSite and was then fetched server-side (SSRF); fix adds a strict UriValidator.",
+   "advisory": "https://github.com/advisories/GHSA-3f7v-qx94-666m"
+  },
+  {
+   "name": "marten",
+   "language": "csharp",
+   "repo": "https://github.com/JasperFx/marten",
+   "fix": "626249656829860b9c55895b5b6046b61a2a695f",
+   "id": "CVE-2026-45288",
+   "cwe": "CWE-89",
+   "license": "MIT",
+   "summary": "src/Marten/Linq/SqlGeneration/Filters/FullTextWhereFragment.cs interpolated the caller's regConfig into SQL (to_tsvector('{_regConfig}'::regconfig, ...)); fix validates it as an identifier.",
+   "advisory": "https://github.com/advisories/GHSA-vmw2-qwm8-x84c"
+  },
+  {
+   "name": "Umbraco-CMS",
+   "language": "csharp",
+   "repo": "https://github.com/umbraco/Umbraco-CMS",
+   "fix": "06a2a500b358ce15b1e228391eb60bd517c6e833",
+   "id": "CVE-2025-32017",
+   "cwe": "CWE-22",
+   "license": "MIT",
+   "summary": "src/Umbraco.Core/Services/TemporaryFileService.cs CreateAsync/Validate accepted an attacker-controlled FileName with ../ segments that is written to disk; fix adds IsValidFileName.",
+   "advisory": "https://github.com/advisories/GHSA-q62r-8ppj-xvf4"
+  },
+  {
+   "name": "YoutubeDLSharp",
+   "language": "csharp",
+   "repo": "https://github.com/Bluegrams/YoutubeDLSharp",
+   "fix": "b6051372bd5af30f95f73de47d9bc71c3a07de0f",
+   "id": "CVE-2025-43858",
+   "cwe": "CWE-78",
+   "license": "BSD-3-Clause",
+   "summary": "YoutubeDLSharp/YoutubeDLProcess.cs RunAsync built cmd.exe /C ... + ConvertToArgs(urls, options) for Process.Start on Windows, so unsanitized URLs/options reached a shell; fix removes the cmd.exe path.",
+   "advisory": "https://github.com/advisories/GHSA-2jh5-g5ch-43q5"
+  }
+ ]
+}

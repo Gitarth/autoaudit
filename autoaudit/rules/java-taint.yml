@@ -1,0 +1,161 @@
+# autoaudit's own Opengrep/Semgrep taint rules (Java web), mirroring specs/java.json.
+# Written for this project, so they can be used commercially (unlike the Semgrep
+# registry rules). Run with: autoaudit opengrep --src <dir>
+rules:
+  - id: autoaudit-java-sqli
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data reaches a SQL statement.
+    metadata: {cwe: ["CWE-89: SQL Injection"], category: security}
+    pattern-sources: &sources
+      - patterns:
+          - pattern: $REQ.$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getPathInfo|getReader|getInputStream)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $X.$EXEC($Q, ...)
+          - metavariable-regex:
+              metavariable: $EXEC
+              regex: ^(executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|query|queryForRowSet|queryForList|queryForObject|queryForMap|update|batchUpdate)$
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern: $E.encodeForSQL(...)
+
+  - id: autoaudit-java-cmdi
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data reaches an OS command.
+    metadata: {cwe: ["CWE-78: OS Command Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $R.exec(...)
+          - pattern: new ProcessBuilder(...)
+          - pattern: new java.lang.ProcessBuilder(...)
+          - pattern: $PB.command(...)
+
+  - id: autoaudit-java-path-traversal
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data selects a file path.
+    metadata: {cwe: ["CWE-22: Path Traversal"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: new java.io.File(...)
+          - pattern: new File(...)
+          - pattern: new java.io.FileInputStream(...)
+          - pattern: new FileInputStream(...)
+          - pattern: new java.io.FileOutputStream(...)
+          - pattern: new FileOutputStream(...)
+          - pattern: new java.io.FileReader(...)
+          - pattern: new java.io.FileWriter(...)
+          - pattern: new java.io.RandomAccessFile(...)
+          - pattern: java.nio.file.Paths.get(...)
+          - pattern: Paths.get(...)
+    pattern-sanitizers:
+      - pattern: (java.io.File $F).getName()
+      - pattern: $P.normalize()
+
+  - id: autoaudit-java-xss
+    mode: taint
+    languages: [java]
+    severity: WARNING
+    message: User-controlled data is written to the HTTP response.
+    metadata: {cwe: ["CWE-79: Cross-site Scripting"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern: $RESP.getWriter().$W(...)
+          - metavariable-regex:
+              metavariable: $W
+              regex: ^(print|println|write|append|format|printf)$
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $E.encodeForHTML(...)
+          - pattern: $E.encodeForJavaScript(...)
+          - pattern: $E.escapeHtml(...)
+          - pattern: $E.escapeHtml4(...)
+          - pattern: $E.htmlEscape(...)
+
+  - id: autoaudit-java-spel-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data is parsed as an expression (SpEL/OGNL/MVEL/EL).
+    metadata: {cwe: ["CWE-917: Expression Language Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $P.parseExpression($E, ...)
+              - pattern: $P.parseRaw($E)
+              - pattern: ognl.Ognl.getValue($E, ...)
+              - pattern: org.mvel2.MVEL.eval($E, ...)
+              - pattern: $EL.eval($E)
+          - focus-metavariable: $E
+
+  - id: autoaudit-java-xxe
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: Untrusted XML is parsed; make sure the parser disables DTDs / external entities.
+    metadata: {cwe: ["CWE-611: XML External Entity"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.xml.parsers.DocumentBuilder $B).parse($X, ...)
+              - pattern: (DocumentBuilder $B).parse($X, ...)
+              - pattern: (javax.xml.parsers.SAXParser $B).parse($X, ...)
+              - pattern: (SAXParser $B).parse($X, ...)
+              - pattern: (org.xml.sax.XMLReader $B).parse($X)
+              - pattern: (XMLReader $B).parse($X)
+              - pattern: $F.createXMLStreamReader($X, ...)
+              - pattern: $F.createXMLEventReader($X, ...)
+              - pattern: (Unmarshaller $U).unmarshal($X, ...)
+              - pattern: (javax.xml.bind.Unmarshaller $U).unmarshal($X, ...)
+          - focus-metavariable: $X
+
+  - id: autoaudit-java-ldap-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data reaches an LDAP search.
+    metadata: {cwe: ["CWE-90: LDAP Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: (javax.naming.directory.DirContext $C).search(...)
+          - pattern: (javax.naming.directory.InitialDirContext $C).search(...)
+          - pattern: (DirContext $C).search(...)
+          - pattern: (InitialDirContext $C).search(...)
+          - pattern: (LdapTemplate $T).search(...)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $E.encodeForLDAP(...)
+          - pattern: $E.encodeForDN(...)
+
+  - id: autoaudit-java-xpath-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: User-controlled data is evaluated as an XPath expression.
+    metadata: {cwe: ["CWE-643: XPath Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.xml.xpath.XPath $X).evaluate($E, ...)
+              - pattern: (javax.xml.xpath.XPath $X).compile($E)
+              - pattern: (XPath $X).evaluate($E, ...)
+              - pattern: (XPath $X).compile($E)
+          - focus-metavariable: $E
+    pattern-sanitizers:
+      - pattern: $E.encodeForXPath(...)

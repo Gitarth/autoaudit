@@ -1,0 +1,223 @@
+# autoaudit's own Opengrep/Semgrep taint rules for PHP web code (plain PHP,
+# Laravel, Symfony, WordPress). Written for this project.
+rules:
+  - id: autoaudit-php-sqli
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: User-controlled data reaches a SQL statement.
+    metadata: {cwe: ["CWE-89: SQL Injection"], category: security}
+    pattern-sources: &sources
+      - pattern-either:
+          - pattern: $_GET
+          - pattern: $_POST
+          - pattern: $_REQUEST
+          - pattern: $_COOKIE
+          - pattern: $_FILES
+          - pattern: $_SERVER['HTTP_REFERER']
+          - pattern: $_SERVER['HTTP_USER_AGENT']
+          - pattern: $_SERVER['HTTP_HOST']
+          - pattern: $_SERVER['REQUEST_URI']
+          - pattern: $_SERVER['QUERY_STRING']
+          - pattern: $_SERVER['PHP_SELF']
+          - pattern: file_get_contents('php://input')
+          - pattern: getallheaders()
+          - pattern: $REQUEST->input(...)
+          - pattern: $REQUEST->get(...)
+          - pattern: $REQUEST->query(...)
+          - pattern: $REQUEST->post(...)
+          - pattern: $REQUEST->all()
+          - pattern: $REQUEST->cookie(...)
+          - pattern: $REQUEST->header(...)
+          - pattern: $REQUEST->getContent()
+          - pattern: $REQUEST->query->get(...)
+          - pattern: $REQUEST->request->get(...)
+          - pattern: $REQUEST->getQueryParams()
+          - pattern: $REQUEST->getParsedBody()
+          - pattern: Request::input(...)
+          - pattern: Input::get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: mysqli_query($C, $Q, ...)
+              - pattern: mysql_query($Q, ...)
+              - pattern: pg_query($C, $Q)
+              - pattern: sqlite_query($C, $Q)
+              - pattern: $DB->query($Q, ...)
+              - pattern: $DB->exec($Q)
+              - pattern: $DB->prepare($Q, ...)
+              - pattern: $DB->get_results($Q, ...)
+              - pattern: $DB->get_row($Q, ...)
+              - pattern: $DB->get_var($Q, ...)
+              - pattern: $DB->get_col($Q, ...)
+              - pattern: $DB->rawQuery($Q, ...)
+              - pattern: DB::raw($Q)
+              - pattern: DB::select($Q, ...)
+              - pattern: DB::statement($Q, ...)
+              - pattern: DB::unprepared($Q)
+              - pattern: $QB->whereRaw($Q, ...)
+              - pattern: $QB->selectRaw($Q, ...)
+              - pattern: $QB->orderByRaw($Q, ...)
+              - pattern: $QB->havingRaw($Q, ...)
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: intval(...)
+          - pattern: (int) $X
+          - pattern: floatval(...)
+          - pattern: mysqli_real_escape_string(...)
+          - pattern: mysql_real_escape_string(...)
+          - pattern: $C->real_escape_string(...)
+          - pattern: pg_escape_string(...)
+          - pattern: pg_escape_literal(...)
+          - pattern: addslashes(...)
+          - pattern: $PDO->quote(...)
+          - pattern: $DB->prepare(...)
+          - pattern: esc_sql(...)
+          - pattern: absint(...)
+
+  - id: autoaudit-php-cmdi
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: User-controlled data reaches an OS command.
+    metadata: {cwe: ["CWE-78: OS Command Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: system(...)
+          - pattern: exec(...)
+          - pattern: shell_exec(...)
+          - pattern: passthru(...)
+          - pattern: popen(...)
+          - pattern: proc_open(...)
+          - pattern: pcntl_exec(...)
+          - pattern: "`...`"
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: escapeshellarg(...)
+          - pattern: escapeshellcmd(...)
+          - pattern: intval(...)
+
+  - id: autoaudit-php-path-traversal
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: User-controlled data selects a file path or an included file.
+    metadata: {cwe: ["CWE-22: Path Traversal"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: include $P;
+              - pattern: include_once $P;
+              - pattern: require $P;
+              - pattern: require_once $P;
+              - pattern: file_get_contents($P, ...)
+              - pattern: file_put_contents($P, ...)
+              - pattern: fopen($P, ...)
+              - pattern: readfile($P, ...)
+              - pattern: file($P, ...)
+              - pattern: unlink($P, ...)
+              - pattern: copy($P, ...)
+              - pattern: copy($S, $P, ...)
+              - pattern: rename($P, ...)
+              - pattern: rename($S, $P, ...)
+              - pattern: move_uploaded_file($S, $P)
+              - pattern: mkdir($P, ...)
+              - pattern: rmdir($P, ...)
+              - pattern: scandir($P, ...)
+              - pattern: opendir($P, ...)
+              - pattern: highlight_file($P, ...)
+              - pattern: show_source($P, ...)
+              - pattern: parse_ini_file($P, ...)
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: basename(...)
+          - pattern: intval(...)
+          - pattern: sanitize_file_name(...)
+
+  - id: autoaudit-php-xss
+    mode: taint
+    languages: [php]
+    severity: WARNING
+    message: User-controlled data is printed into HTML without escaping.
+    metadata: {cwe: ["CWE-79: Cross-site Scripting"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: echo ...;
+          - pattern: print(...)
+          - pattern: printf(...)
+          - pattern: vprintf(...)
+          - pattern: $RESPONSE->setContent(...)
+          - pattern: response(...)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: htmlspecialchars(...)
+          - pattern: htmlentities(...)
+          - pattern: strip_tags(...)
+          - pattern: esc_html(...)
+          - pattern: esc_attr(...)
+          - pattern: esc_url(...)
+          - pattern: esc_js(...)
+          - pattern: wp_kses(...)
+          - pattern: wp_kses_post(...)
+          - pattern: e(...)
+          - pattern: intval(...)
+          - pattern: (int) $X
+          - pattern: json_encode(...)
+          - pattern: urlencode(...)
+          - pattern: rawurlencode(...)
+
+  - id: autoaudit-php-code-injection
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: User-controlled data is evaluated as PHP code.
+    metadata: {cwe: ["CWE-94: Code Injection"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: assert(...)
+          - pattern: create_function(...)
+          - pattern: call_user_func($F, ...)
+          - pattern: call_user_func_array($F, ...)
+          - pattern: preg_replace(...)
+          - pattern: fwrite($H, ...)
+          - pattern: fputs($H, ...)
+
+  - id: autoaudit-php-deserialization
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: User-controlled data is unserialized into objects.
+    metadata: {cwe: ["CWE-502: Deserialization of Untrusted Data"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - pattern-either:
+          - pattern: unserialize(...)
+          - pattern: maybe_unserialize(...)
+
+  - id: autoaudit-php-ssrf
+    mode: taint
+    languages: [php]
+    severity: WARNING
+    message: User-controlled data selects the URL of a server-side request.
+    metadata: {cwe: ["CWE-918: Server-Side Request Forgery"], category: security}
+    pattern-sources: *sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: curl_init($U)
+              - pattern: curl_setopt($CH, CURLOPT_URL, $U)
+              - pattern: file_get_contents($U, ...)
+              - pattern: fsockopen($U, ...)
+              - pattern: get_headers($U, ...)
+              - pattern: wp_remote_get($U, ...)
+              - pattern: wp_remote_post($U, ...)
+              - pattern: $HTTP->request($M, $U, ...)
+              - pattern: Http::get($U, ...)
+          - focus-metavariable: $U
